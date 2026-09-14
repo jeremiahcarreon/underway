@@ -182,13 +182,15 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
 .footer{font-size:11px;color:var(--muted);text-align:center;padding:14px}
 .footer a{color:var(--muted)}
 
+.placegrid{grid-template-columns:1fr 300px}
 @media (max-width: 1080px){
   .battle{grid-template-columns:1fr 1fr}
+  .placegrid{grid-template-columns:1fr 300px}
   .logbox{grid-column:1 / -1;height:200px}
 }
 @media (max-width: 720px){
   .screen{padding:8px}
-  .battle{grid-template-columns:1fr}
+  .battle,.placegrid{grid-template-columns:1fr}
   .tabs{display:flex}
   .battle .side.inactive{display:none}
   .logbox{height:160px}
