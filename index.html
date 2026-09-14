@@ -753,3 +753,312 @@ function RNG(seed){
 function randomRoomCode(rng){ const A='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s=''; for(let i=0;i<6;i++) s+=A[rng?rng.int(A.length):Math.floor(Math.random()*A.length)]; return s; }
 
 /* ============================================================
+   SECTION 3 — RULES ENGINE (pure: no DOM, no network, no timers)
+   Every function takes state and returns a new state or a result.
+   ============================================================ */
+const Rules = (function(){
+  const clone = o => JSON.parse(JSON.stringify(o));
+  const inBounds = c => c.x>=0 && c.y>=0 && c.x<SIZE && c.y<SIZE;
+  const other = pid => pid==='host' ? 'guest' : 'host';
+
+  function makeShip(cls, bow, heading){
+    const k = SHIP_CLASSES[cls];
+    return { cls, bow: bow?{x:bow.x,y:bow.y}:null, heading: heading||'N', hits: new Array(k.size).fill(false),
+             crippled:false, crippledBy:null, crippledTurn:null, sunk:false, sunkTurn:null, firstHitTurn:null, absorbed:0 };
+  }
+  function emptyFleet(){ return CLASS_ORDER.map(c=>makeShip(c,null,'N')); }
+  function shipCells(ship){
+    if(!ship.bow) return [];
+    const d=DIR[ship.heading], n=SHIP_CLASSES[ship.cls].size, out=[];
+    for(let i=0;i<n;i++) out.push({x:ship.bow.x-d.x*i, y:ship.bow.y-d.y*i});
+    return out;
+  }
+  function sternCell(ship){ const c=shipCells(ship); return c[c.length-1]; }
+  function sectionAt(ship, cell){ return shipCells(ship).findIndex(c=>c.x===cell.x&&c.y===cell.y); }
+  function hitCount(ship){ return ship.hits.filter(Boolean).length; }
+  function mobility(ship){ return ship.sunk?'sunk':ship.crippled?'crippled':hitCount(ship)>0?'damaged':'ok'; }
+  function rotateHeading(h, cw){ const i=HEADINGS.indexOf(h); return HEADINGS[(i+(cw?1:3))%4]; }
+
+  function occupancy(fleet, excludeIdx){
+    const m = new Map();
+    fleet.forEach((s,i)=>{ if(i===excludeIdx||!s.bow) return; shipCells(s).forEach(c=>m.set(cellKey(c), i)); });
+    return m;
+  }
+  // Placement legality of one ship at bow/heading against the rest of the fleet.
+  function canPlace(fleet, idx, bow, heading){
+    const test = Object.assign({}, fleet[idx], {bow, heading});
+    const cells = shipCells(test);
+    if(cells.some(c=>!inBounds(c))) return {ok:false, reason:'Off the board'};
+    const occ = occupancy(fleet, idx);
+    for(const c of cells){ const k=cellKey(c); if(occ.has(k)) return {ok:false, reason:'Overlaps '+SHIP_CLASSES[fleet[occ.get(k)].cls].name}; }
+    return {ok:true};
+  }
+  function placeShip(fleet, idx, bow, heading){
+    const r = canPlace(fleet, idx, bow, heading);
+    if(!r.ok) return {ok:false, reason:r.reason, fleet};
+    const f = clone(fleet); f[idx].bow={x:bow.x,y:bow.y}; f[idx].heading=heading;
+    return {ok:true, fleet:f};
+  }
+  function validatePlacement(fleet){
+    const errors=[];
+    if(!Array.isArray(fleet)||fleet.length!==CLASS_ORDER.length) return {ok:false, reason:'Fleet must have exactly five ships', errors:['count']};
+    CLASS_ORDER.forEach((cls,i)=>{ if(!fleet[i]||fleet[i].cls!==cls) errors.push('Ship '+i+' must be '+cls); });
+    if(errors.length) return {ok:false, reason:errors[0], errors};
+    const seen=new Map();
+    fleet.forEach((s,i)=>{
+      if(!s.bow){ errors.push(SHIP_CLASSES[s.cls].name+' is not placed'); return; }
+      if(!HEADINGS.includes(s.heading)){ errors.push(SHIP_CLASSES[s.cls].name+' has an invalid heading'); return; }
+      shipCells(s).forEach(c=>{
+        if(!inBounds(c)) errors.push(SHIP_CLASSES[s.cls].name+' is off the board');
+        const k=cellKey(c);
+        if(seen.has(k)) errors.push(SHIP_CLASSES[s.cls].name+' overlaps '+SHIP_CLASSES[fleet[seen.get(k)].cls].name+' at '+cellName(c));
+        seen.set(k,i);
+      });
+    });
+    const uniq=[...new Set(errors)];
+    return {ok:uniq.length===0, reason:uniq[0]||'', errors:uniq};
+  }
+
+  // Geometry of a move without legality.
+  function movedShip(ship, type){
+    const s = clone(ship);
+    const d = DIR[ship.heading], n = SHIP_CLASSES[ship.cls].size;
+    if(type==='advance'){ s.bow={x:ship.bow.x+d.x, y:ship.bow.y+d.y}; }
+    else if(type==='reverse'){ s.bow={x:ship.bow.x-d.x, y:ship.bow.y-d.y}; }
+    else if(type==='rotcw'||type==='rotccw'){
+      const stern = sternCell(ship);
+      const h = rotateHeading(ship.heading, type==='rotcw');
+      const nd = DIR[h];
+      s.heading = h; s.bow = {x:stern.x+nd.x*(n-1), y:stern.y+nd.y*(n-1)};
+    }
+    return s;
+  }
+  function canMove(fleet, idx, type){
+    const ship = fleet[idx];
+    if(!ship||!ship.bow) return {ok:false, reason:'No such ship'};
+    if(!MOVE_TYPES.includes(type)) return {ok:false, reason:'Unknown maneuver'};
+    if(ship.sunk) return {ok:false, reason:'Ship is sunk'};
+    if(ship.crippled) return {ok:false, reason:'Crippled'};
+    const rot = type==='rotcw'||type==='rotccw';
+    if(rot && hitCount(ship)>0) return {ok:false, reason:'Damaged ships cannot rotate'};
+    const ns = movedShip(ship, type);
+    const cells = shipCells(ns);
+    if(cells.some(c=>!inBounds(c))) return {ok:false, reason:'Off the board'};
+    const occ = occupancy(fleet, idx);
+    for(const c of cells){
+      const k=cellKey(c);
+      if(occ.has(k)){ const b=fleet[occ.get(k)]; return {ok:false, reason: b.sunk?'Blocked by wreck':'Blocked by '+SHIP_CLASSES[b.cls].name}; }
+    }
+    return {ok:true, ship:ns};
+  }
+  function applyMove(fleet, idx, type){
+    const r = canMove(fleet, idx, type);
+    if(!r.ok) return {ok:false, reason:r.reason, fleet};
+    const f = clone(fleet); f[idx]=r.ship;
+    return {ok:true, fleet:f, ship:r.ship};
+  }
+
+  // Resolve one shot against a fleet. Returns the result and a new fleet.
+  function resolveShot(fleet, cell, turn){
+    const f = clone(fleet);
+    for(let i=0;i<f.length;i++){
+      const ship=f[i]; if(!ship.bow) continue;
+      const sec = sectionAt(ship, cell);
+      if(sec<0) continue;
+      const k = SHIP_CLASSES[ship.cls];
+      ship.absorbed = (ship.absorbed||0)+1;
+      if(ship.hits[sec]){
+        return {result:RESULT.CONFIRMED, cls:ship.cls, shipIdx:i, section:sec, crippled:false, crippledBy:null, sunk:ship.sunk, footprint:null, fleet:f};
+      }
+      ship.hits[sec]=true;
+      if(ship.firstHitTurn==null) ship.firstHitTurn=turn||0;
+      let newlyCrippled=false, by=null;
+      if(!ship.crippled){
+        if(sec===k.size-1){ newlyCrippled=true; by='stern'; }
+        else if(hitCount(ship)>=k.threshold){ newlyCrippled=true; by='threshold'; }
+        if(newlyCrippled){ ship.crippled=true; ship.crippledBy=by; ship.crippledTurn=turn||0; }
+      }
+      if(ship.hits.every(Boolean)){
+        ship.sunk=true; ship.sunkTurn=turn||0; ship.crippled=true; if(!ship.crippledBy) ship.crippledBy=by||'sunk';
+        return {result:RESULT.SUNK, cls:ship.cls, shipIdx:i, section:sec, crippled:newlyCrippled, crippledBy:by, sunk:true, footprint:shipCells(ship), fleet:f};
+      }
+      return {result:RESULT.HIT, cls:ship.cls, shipIdx:i, section:sec, crippled:newlyCrippled, crippledBy:by, sunk:false, footprint:null, fleet:f};
+    }
+    return {result:RESULT.MISS, cls:null, shipIdx:-1, section:-1, crippled:false, crippledBy:null, sunk:false, footprint:null, fleet:f};
+  }
+  function allSunk(fleet){ return fleet.length>0 && fleet.every(s=>s.sunk); }
+  function sunkCount(fleet){ return fleet.filter(s=>s.sunk).length; }
+
+  /* ---- Fleet generators ---- */
+  function randomFleet(rng){
+    let fleet = emptyFleet();
+    for(let i=0;i<fleet.length;i++){
+      let placed=false;
+      for(let tries=0;tries<400&&!placed;tries++){
+        const bow={x:rng.int(SIZE), y:rng.int(SIZE)}, heading=rng.pick(HEADINGS);
+        const r=placeShip(fleet,i,bow,heading); if(r.ok){ fleet=r.fleet; placed=true; }
+      }
+      if(!placed){ // systematic fallback
+        for(let y=0;y<SIZE&&!placed;y++) for(let x=0;x<SIZE&&!placed;x++) for(const h of HEADINGS){ const r=placeShip(fleet,i,{x,y},h); if(r.ok){ fleet=r.fleet; placed=true; break; } }
+      }
+    }
+    return fleet;
+  }
+  const TEMPLATES = {
+    perimeter: [ {x:4,y:0,h:'E'}, {x:9,y:1,h:'N'}, {x:2,y:9,h:'W'}, {x:0,y:5,h:'N'}, {x:7,y:9,h:'E'} ],
+    cluster:   [ {x:6,y:4,h:'E'}, {x:6,y:5,h:'E'}, {x:5,y:6,h:'E'}, {x:5,y:3,h:'E'}, {x:4,y:7,h:'E'} ],
+    spread:    [ {x:1,y:1,h:'N'}, {x:8,y:1,h:'N'}, {x:7,y:8,h:'E'}, {x:5,y:5,h:'S'}, {x:2,y:8,h:'W'} ],
+  };
+  function templateFleet(name){
+    const t=TEMPLATES[name]; if(!t) return null;
+    const fleet=emptyFleet();
+    t.forEach((p,i)=>{ fleet[i].bow={x:p.x,y:p.y}; fleet[i].heading=p.h; });
+    return fleet;
+  }
+
+  /* ---- Game state ---- */
+  function createPlayer(id, name, navyId){
+    return { id, name:name||(id==='host'?'Host':'Guest'), navy:navyId||null, ready:false, fleet:null, initialFleet:null,
+             shots:[], moves:[], weapons:[{id:'shell', name:'Standard shell', cooldown:0, usesRemaining:null}] };
+  }
+  function createGame(opts){
+    opts=opts||{};
+    return { v:1, room:opts.room||'', mode:opts.mode||'net', aiLevel:opts.aiLevel||null, seed:opts.seed||1,
+             stage:'lobby', turn:0, current:null, first:null, phase:'maneuver', maneuvered:false, winner:null, endReason:null,
+             players:{ host:createPlayer('host',opts.hostName,opts.hostNavy), guest:createPlayer('guest',opts.guestName,opts.guestNavy) },
+             log:[], ai:null, rematches:0 };
+  }
+  function setFleet(game, pid, fleet){
+    const v=validatePlacement(fleet); if(!v.ok) return {ok:false, reason:v.reason, game};
+    const g=clone(game); const f=clone(fleet);
+    f.forEach(s=>{ s.hits=new Array(SHIP_CLASSES[s.cls].size).fill(false); s.crippled=false; s.crippledBy=null; s.crippledTurn=null; s.sunk=false; s.sunkTurn=null; s.firstHitTurn=null; s.absorbed=0; });
+    g.players[pid].fleet=f; g.players[pid].initialFleet=clone(f); g.players[pid].ready=true;
+    return {ok:true, game:g};
+  }
+  function startBattle(game, first){
+    const g=clone(game); g.stage='battle'; g.turn=1; g.first=first; g.current=first; g.phase='maneuver'; g.maneuvered=false; g.winner=null; g.endReason=null; g.log=[];
+    return g;
+  }
+  function endTurn(g){ g.turn+=1; g.current=other(g.current); g.phase='maneuver'; g.maneuvered=false; return g; }
+  function guard(game, pid){
+    if(game.stage!=='battle') return 'Battle is not in progress';
+    if(game.winner) return 'The battle is over';
+    if(game.current!==pid) return 'Not your turn';
+    return null;
+  }
+  function maneuver(game, pid, shipIdx, type){
+    const err=guard(game,pid); if(err) return {ok:false, reason:err, game};
+    if(game.phase!=='maneuver') return {ok:false, reason:'Maneuver phase is over', game};
+    const p=game.players[pid]; if(!p.fleet) return {ok:false, reason:'No fleet', game};
+    const mv=canMove(p.fleet, shipIdx, type); if(!mv.ok) return {ok:false, reason:mv.reason, game};
+    const g=clone(game); const gp=g.players[pid];
+    const from={bow:clone(gp.fleet[shipIdx].bow), heading:gp.fleet[shipIdx].heading};
+    gp.fleet[shipIdx]=mv.ship;
+    const rec={n:g.log.length, turn:g.turn, player:pid, kind:'move', ship:shipIdx, cls:mv.ship.cls, type, from, to:{bow:clone(mv.ship.bow), heading:mv.ship.heading}};
+    gp.moves.push(rec); g.log.push(rec);
+    g.maneuvered=true;
+    const rot = type==='rotcw'||type==='rotccw';
+    if(rot){ endTurn(g); return {ok:true, game:g, ended:true, ship:mv.ship}; }
+    g.phase='fire';
+    return {ok:true, game:g, ended:false, ship:mv.ship};
+  }
+  function skipManeuver(game, pid){
+    const err=guard(game,pid); if(err) return {ok:false, reason:err, game};
+    if(game.phase!=='maneuver') return {ok:false, reason:'Already in fire phase', game};
+    const g=clone(game); g.phase='fire'; return {ok:true, game:g};
+  }
+  // Fire. If `override` (a result object from the remote defender) is given it is used verbatim; otherwise the
+  // defender's fleet must be present locally and is resolved here.
+  function fire(game, pid, cell, override){
+    const err=guard(game,pid); if(err) return {ok:false, reason:err, game};
+    if(!cell||!inBounds(cell)) return {ok:false, reason:'Off the board', game};
+    if(game.phase!=='fire' && game.phase!=='maneuver') return {ok:false, reason:'Cannot fire now', game};
+    const g=clone(game); const def=other(pid); const dp=g.players[def]; const ap=g.players[pid];
+    let res;
+    if(override){ res=Object.assign({shipIdx: override.cls?CLASS_ORDER.indexOf(override.cls):-1, section:-1}, override); }
+    else {
+      if(!dp.fleet) return {ok:false, reason:'Defender fleet unknown', game};
+      res=resolveShot(dp.fleet, cell, g.turn); dp.fleet=res.fleet;
+    }
+    const shot={n:g.log.length, turn:g.turn, player:pid, kind:'shot', cell:{x:cell.x,y:cell.y}, result:res.result, cls:res.cls||null, shipIdx:res.shipIdx,
+                crippled:!!res.crippled, crippledBy:res.crippledBy||null, footprint:res.footprint?clone(res.footprint):null};
+    if(!override) shot.section=res.section;
+    ap.shots.push(shot); g.log.push(shot);
+    const sunkClasses=new Set(ap.shots.filter(s=>s.result===RESULT.SUNK).map(s=>s.cls));
+    if(sunkClasses.size>=CLASS_ORDER.length){ g.winner=pid; g.stage='over'; g.endReason='fleet'; g.phase='done'; }
+    else endTurn(g);
+    return {ok:true, game:g, shot, res};
+  }
+  // Rotation on a remote opponent: they send END_TURN and we simply advance.
+  function remoteEndTurn(game, pid){
+    if(game.stage!=='battle'||game.current!==pid) return {ok:false, reason:'Not their turn', game};
+    const g=clone(game); endTurn(g); return {ok:true, game:g};
+  }
+  function surrender(game, pid){
+    const g=clone(game); g.winner=other(pid); g.stage='over'; g.endReason='surrender'; g.phase='done'; return g;
+  }
+  function resultText(shot){
+    const cn = shot.cls ? SHIP_CLASSES[shot.cls].name : '';
+    switch(shot.result){
+      case RESULT.MISS: return 'Miss';
+      case RESULT.HIT: return 'Hit: '+cn+(shot.crippled?' — Crippled: dead in the water':'');
+      case RESULT.CONFIRMED: return 'Confirmed: '+cn+' still here';
+      case RESULT.SUNK: return 'Sunk: '+cn;
+    }
+    return '';
+  }
+  // Tracking-grid peg map derived from a shot list (latest peg per cell + history + stale flags).
+  function pegMap(shots){
+    const map=new Map();
+    shots.forEach(s=>{
+      const k=cellKey(s.cell);
+      if(!map.has(k)) map.set(k,{cell:s.cell, history:[], latest:null, stale:false, sunkCls:null});
+      const e=map.get(k); e.history.push(s); e.latest=s;
+    });
+    shots.filter(s=>s.result===RESULT.SUNK && s.footprint).forEach(s=>{
+      const fp=new Set(s.footprint.map(cellKey));
+      fp.forEach(k=>{ if(!map.has(k)) map.set(k,{cell:s.footprint.find(c=>cellKey(c)===k), history:[], latest:null, stale:false, sunkCls:null}); map.get(k).sunkCls=s.cls; });
+      map.forEach((e,k)=>{
+        if(e.latest && (e.latest.result===RESULT.HIT||e.latest.result===RESULT.CONFIRMED) && e.latest.cls===s.cls && !fp.has(k)) e.stale=true;
+      });
+    });
+    return map;
+  }
+  function classTally(shots){
+    const t={};
+    CLASS_ORDER.forEach(c=>t[c]={hits:0,total:SHIP_CLASSES[c].size,sunk:false,crippled:false});
+    shots.forEach(s=>{ if(s.cls&&(s.result===RESULT.HIT||s.result===RESULT.SUNK)){ t[s.cls].hits++; if(s.result===RESULT.SUNK) t[s.cls].sunk=true; if(s.crippled) t[s.cls].crippled=true; } });
+    return t;
+  }
+  function computeStats(game, pid){
+    const p=game.players[pid], o=game.players[other(pid)];
+    const shots=p.shots, hits=shots.filter(s=>s.result===RESULT.HIT||s.result===RESULT.SUNK).length;
+    const hitsByClass={}; CLASS_ORDER.forEach(c=>hitsByClass[c]=0);
+    shots.forEach(s=>{ if(s.cls&&(s.result===RESULT.HIT||s.result===RESULT.SUNK)) hitsByClass[s.cls]++; });
+    const sternCripples=shots.filter(s=>s.crippled&&s.crippledBy==='stern').length;
+    const adv=p.moves.filter(m=>m.type==='advance').length, rev=p.moves.filter(m=>m.type==='reverse').length, rot=p.moves.filter(m=>m.type==='rotcw'||m.type==='rotccw').length;
+    let longestChase=0, longestChaseCls=null;
+    CLASS_ORDER.forEach(c=>{
+      const first=shots.find(s=>s.cls===c&&(s.result===RESULT.HIT||s.result===RESULT.SUNK));
+      const sunk=shots.find(s=>s.cls===c&&s.result===RESULT.SUNK);
+      if(first&&sunk){ const d=sunk.turn-first.turn; if(d>longestChase){ longestChase=d; longestChaseCls=c; } }
+    });
+    let mvp=null;
+    if(p.fleet){
+      const finalTurn=game.turn;
+      p.fleet.forEach(s=>{
+        const dmgTurns = s.firstHitTurn!=null ? ((s.sunkTurn!=null?s.sunkTurn:finalTurn)-s.firstHitTurn) : -1;
+        const score = dmgTurns*100 + (s.absorbed||0);
+        if(!mvp||score>mvp.score) mvp={cls:s.cls, score, dmgTurns, absorbed:s.absorbed||0};
+      });
+    }
+    return { turns:game.turn, shots:shots.length, hits, accuracy: shots.length?hits/shots.length:0, hitsByClass, sternCripples,
+             advances:adv, reverses:rev, rotations:rot, longestChase, longestChaseCls, mvp, shipsLost: p.fleet?sunkCount(p.fleet):0, shipsSunk: sunkCount(o.fleet||[]) || shots.filter(s=>s.result===RESULT.SUNK).length };
+  }
+
+  return { clone, inBounds, other, makeShip, emptyFleet, shipCells, sternCell, sectionAt, hitCount, mobility, rotateHeading, occupancy,
+           canPlace, placeShip, validatePlacement, movedShip, canMove, applyMove, resolveShot, allSunk, sunkCount, randomFleet, templateFleet, TEMPLATES,
+           createPlayer, createGame, setFleet, startBattle, endTurn, maneuver, skipManeuver, fire, remoteEndTurn, surrender, resultText, pegMap, classTally, computeStats };
+})();
+
+/* ============================================================
