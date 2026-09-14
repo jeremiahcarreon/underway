@@ -490,3 +490,247 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
 const Underway = (function(){
 
 /* ============================================================
+   SECTION 1 — CONSTANTS, SHIP CLASSES, NAVY DATA
+   ============================================================ */
+const CLIENT_VERSION = '1.0.0';
+const PROTOCOL_VERSION = 1;
+const SIZE = 10;
+const COLS = 'ABCDEFGHIJ';
+const HEADINGS = ['N','E','S','W'];
+const DIR = { N:{x:0,y:-1}, E:{x:1,y:0}, S:{x:0,y:1}, W:{x:-1,y:0} };
+const CLASS_ORDER = ['carrier','battleship','destroyer','submarine','patrol'];
+const SHIP_CLASSES = {
+  carrier:    { id:'carrier',    name:'Carrier',     size:5, threshold:3, sections:['bow','2','3','4','stern'], icon:'C' },
+  battleship: { id:'battleship', name:'Battleship',  size:4, threshold:2, sections:['bow','fore','aft','stern'], icon:'B' },
+  destroyer:  { id:'destroyer',  name:'Destroyer',   size:3, threshold:2, sections:['bow','mid','stern'], icon:'D' },
+  submarine:  { id:'submarine',  name:'Submarine',   size:3, threshold:2, sections:['bow','mid','stern'], icon:'S' },
+  patrol:     { id:'patrol',     name:'Patrol Boat', size:2, threshold:1, sections:['bow','stern'], icon:'P' },
+};
+const MOVE_TYPES = ['advance','reverse','rotcw','rotccw'];
+const RESULT = { MISS:'miss', HIT:'hit', CONFIRMED:'confirmed', SUNK:'sunk' };
+
+/* ---- Flag DSL: normalized coordinates (x in 0..1 of width, y in 0..1 of height, r in units of height) ---- */
+const F = {
+  rect:(x,y,w,h,c)=>({t:'rect',x,y,w,h,c}),
+  circle:(cx,cy,r,c)=>({t:'circle',cx,cy,r,c}),
+  poly:(pts,c)=>({t:'poly',pts,c}),
+  line:(x1,y1,x2,y2,w,c)=>({t:'line',x1,y1,x2,y2,w,c}),
+  star:(cx,cy,r,c,n)=>({t:'star',cx,cy,r,c,n:n||5}),
+  arc:(cx,cy,r,a0,a1,w,c)=>({t:'arc',cx,cy,r,a0,a1,w,c}),
+  rays:(cx,cy,n,c)=>({t:'rays',cx,cy,n,c}),
+};
+// Union flag primitives, reused for the UK and the Australian canton.
+function unionPrims(){
+  return [
+    F.rect(0,0,1,1,'#012169'),
+    F.line(0,0,1,1,.2,'#fff'), F.line(1,0,0,1,.2,'#fff'),
+    F.line(0,0,1,1,.07,'#C8102E'), F.line(1,0,0,1,.07,'#C8102E'),
+    F.rect(.4,0,.2,1,'#fff'), F.rect(0,.333,1,.334,'#fff'),
+    F.rect(.44,0,.12,1,'#C8102E'), F.rect(0,.4,1,.2,'#C8102E'),
+  ];
+}
+// Scale a primitive list into a sub-rectangle (used for cantons).
+function subPrims(prims,x,y,w,h){
+  const sx=v=>x+v*w, sy=v=>y+v*h;
+  return prims.map(p=>{
+    switch(p.t){
+      case 'rect': return F.rect(sx(p.x),sy(p.y),p.w*w,p.h*h,p.c);
+      case 'circle': return F.circle(sx(p.cx),sy(p.cy),p.r*h,p.c);
+      case 'poly': return F.poly(p.pts.map(q=>[sx(q[0]),sy(q[1])]),p.c);
+      case 'line': return F.line(sx(p.x1),sy(p.y1),sx(p.x2),sy(p.y2),p.w*h,p.c);
+      case 'star': return F.star(sx(p.cx),sy(p.cy),p.r*h,p.c,p.n);
+      default: return p;
+    }
+  });
+}
+const MAPLE = [[.5,.06],[.58,.2],[.68,.14],[.65,.32],[.8,.25],[.75,.42],[.92,.45],[.8,.55],[.85,.65],[.55,.62],[.55,.92],[.45,.92],[.45,.62],[.15,.65],[.2,.55],[.08,.45],[.25,.42],[.2,.25],[.35,.32],[.32,.14],[.42,.2]];
+function flagUS(){
+  const p=[];
+  for(let i=0;i<13;i++) p.push(F.rect(0,i/13,1,1/13+.002,i%2?'#fff':'#B22234'));
+  p.push(F.rect(0,0,.4,7/13,'#3C3B6E'));
+  for(let r=0;r<4;r++) for(let c=0;c<5;c++) p.push(F.star(.04+c*.08,.07+r*.13,.035,'#fff'));
+  return p;
+}
+function flagUK(){ return unionPrims(); }
+function flagJP(){ return [F.rect(0,0,1,1,'#fff'),F.rays(.35,.5,16,'#BC002D'),F.circle(.35,.5,.3,'#BC002D')]; }
+function flagDE(){ return [F.rect(0,0,1,.334,'#000'),F.rect(0,.333,1,.334,'#DD0000'),F.rect(0,.666,1,.334,'#FFCE00')]; }
+function flagFR(){ return [F.rect(0,0,.334,1,'#0055A4'),F.rect(.333,0,.334,1,'#fff'),F.rect(.666,0,.334,1,'#EF4135')]; }
+function flagIT(){ return [F.rect(0,0,.334,1,'#009246'),F.rect(.333,0,.334,1,'#fff'),F.rect(.666,0,.334,1,'#CE2B37')]; }
+function flagRU(){ return [F.rect(0,0,1,1,'#fff'),F.line(0,0,1,1,.13,'#0039A6'),F.line(1,0,0,1,.13,'#0039A6')]; }
+function flagAU(){
+  const p=[F.rect(0,0,1,1,'#fff')];
+  p.push(...subPrims(unionPrims(),0,0,.5,.5));
+  p.push(F.star(.25,.75,.11,'#012169',7));
+  [[.75,.12,.07],[.6,.5,.06],[.9,.4,.06],[.75,.88,.07],[.84,.58,.04]].forEach(s=>p.push(F.star(s[0],s[1],s[2],'#012169',7)));
+  return p;
+}
+function flagCA(){
+  return [F.rect(0,0,1,1,'#fff'),F.rect(0,0,.25,1,'#FF0000'),F.rect(.75,0,.25,1,'#FF0000'),
+    F.poly(MAPLE.map(q=>[.25+q[0]*.5,q[1]]),'#FF0000')];
+}
+function flagBR(){
+  return [F.rect(0,0,1,1,'#009C3B'),F.poly([[.5,.1],[.9,.5],[.5,.9],[.1,.5]],'#FFDF00'),F.circle(.5,.5,.29,'#002776'),
+    F.arc(.5,1.05,.7,-1.35,-1.8,.07,'#fff')];
+}
+
+/* ---- Navies ---- */
+const NAVIES = [
+  { id:'us', name:'United States', prefix:'USS', flag:flagUS,
+    livery:{hull:'#6f7f8f',deck:'#5b6772',super:'#8d9aa8',accent:'#c8102e',glow:'#ffb347'},
+    uniform:{shirt:'#f2f2f2',trousers:'#1c2a4a',hat:'#ffffff',skin:'#d9a37a'},
+    voice:{pitch:.9,rate:1.05},
+    ships:{carrier:'Enterprise',battleship:'Iowa',destroyer:'Fletcher',submarine:'Nautilus',patrol:'Cyclone'},
+    chatter:{
+      miss:['Splash, no joy. Adjust and fire again.','Negative contact. Rounds in the water.'],
+      hit:['Direct hit on a {cls}! Pour it on!','Solid hit, {cls} is burning!'],
+      hitCrippled:['{cls} is dead in the water! Screws are gone!','We got her rudder! {cls} can\'t maneuver!'],
+      confirmed:['Same {cls}, same spot. She hasn\'t moved.','Confirmed: {cls} still sitting there.'],
+      sunkOwn:['We\'ve lost {ship}. All hands, abandon ship.','{ship} is going down. Get the rafts out!'],
+      sunkEnemy:['Scratch one {cls}! She\'s going under!','Enemy {cls} sunk. Good shooting, gunners.'],
+      turnStart:['Bridge, conn. Your orders, Admiral.','All stations manned. Awaiting orders.'],
+      victory:['Enemy fleet destroyed. Well done, all hands.','Mission accomplished. Set course for home.'],
+      defeat:['Fleet lost. We\'ll be back.','Strike the colors. It\'s over.'] } },
+  { id:'uk', name:'United Kingdom', prefix:'HMS', flag:flagUK,
+    livery:{hull:'#5f6f7a',deck:'#4b5560',super:'#7f8c97',accent:'#cf142b',glow:'#ffd27a'},
+    uniform:{shirt:'#1b2a45',trousers:'#1b2a45',hat:'#ffffff',skin:'#e6b89c'},
+    voice:{pitch:1.0,rate:0.98},
+    ships:{carrier:'Ark Royal',battleship:'Warspite',destroyer:'Daring',submarine:'Astute',patrol:'Tyne'},
+    chatter:{
+      miss:['Wide, I\'m afraid. Steady on.','Splash astern of the target. Correct and reload.'],
+      hit:['Hit on a {cls}! Splendid shooting!','That\'s a {cls} well and truly hit.'],
+      hitCrippled:['{cls} has lost her screws. She\'s a sitting duck.','Rudder gone on the {cls}. Dead in the water, sir.'],
+      confirmed:['Same {cls}, still burning where we left her.','Confirmed: {cls} hasn\'t budged.'],
+      sunkOwn:['{ship} is lost. God save the crew.','We\'ve lost {ship}. Away lifeboats.'],
+      sunkEnemy:['Enemy {cls} sunk! Jolly good show!','The {cls} has gone to the bottom.'],
+      turnStart:['Your orders, Admiral?','Guns loaded and laid, sir.'],
+      victory:['The enemy fleet is destroyed. Splice the mainbrace!','Victory, sir. Signal the Admiralty.'],
+      defeat:['We\'ve been beaten, sir. Honourably.','Strike the ensign. The fleet is lost.'] } },
+  { id:'jp', name:'Japan', prefix:'JS', flag:flagJP,
+    livery:{hull:'#7a8590',deck:'#666f78',super:'#9ea7b0',accent:'#bc002d',glow:'#ffc36b'},
+    uniform:{shirt:'#ffffff',trousers:'#ffffff',hat:'#ffffff',skin:'#e8c39e'},
+    voice:{pitch:1.1,rate:1.0},
+    ships:{carrier:'Kaga',battleship:'Yamato',destroyer:'Kongo',submarine:'Soryu',patrol:'Hayabusa'},
+    chatter:{
+      miss:['Short. Recalculating range.','Miss. Adjust bearing, fire again.'],
+      hit:['Hit confirmed on {cls}! Keep firing!','Strike on a {cls}! Fire burning!'],
+      hitCrippled:['{cls} cannot move! Its stern is destroyed!','{cls} is dead in the water! Press the attack!'],
+      confirmed:['Same {cls}. It has not moved.','Confirmed: {cls} still on station.'],
+      sunkOwn:['{ship} is lost. Honor to her crew.','{ship} is sinking. Abandon ship!'],
+      sunkEnemy:['Enemy {cls} sunk! Banzai!','The {cls} has gone down. Well done, gunners.'],
+      turnStart:['Awaiting your command, Admiral.','All guns ready. Your orders?'],
+      victory:['Total victory! The enemy fleet is destroyed!','The sea is ours. Signal the flagship.'],
+      defeat:['The fleet is lost. We accept this with honor.','Defeat. Lower the ensign.'] } },
+  { id:'de', name:'Germany', prefix:'FGS', flag:flagDE,
+    livery:{hull:'#4f5a63',deck:'#3f4850',super:'#6d7882',accent:'#ffcc00',glow:'#ffd77a'},
+    uniform:{shirt:'#2b3140',trousers:'#2b3140',hat:'#2b3140',skin:'#e6b89c'},
+    voice:{pitch:.8,rate:0.95},
+    ships:{carrier:'Graf Zeppelin',battleship:'Bismarck',destroyer:'Sachsen',submarine:'U-31',patrol:'Gepard'},
+    chatter:{
+      miss:['Miss. Correct range, fire again.','Water column, no hit. Reload!'],
+      hit:['Treffer! Hit on a {cls}!','Solid hit on a {cls}. She\'s burning.'],
+      hitCrippled:['{cls} has lost her propulsion! Dead in the water!','Stern hit! The {cls} can no longer maneuver.'],
+      confirmed:['Same {cls}. She has not moved.','Confirmed: {cls} still there.'],
+      sunkOwn:['{ship} is sinking. Abandon ship!','We have lost {ship}. Rescue the crew.'],
+      sunkEnemy:['Enemy {cls} sunk! Excellent shooting!','The {cls} has gone under. Versenkt!'],
+      turnStart:['Awaiting orders, Admiral.','All stations report ready.'],
+      victory:['The enemy fleet is destroyed. Victory!','Sieg! Set course for home port.'],
+      defeat:['The fleet is lost. Strike the flag.','Defeat. We have fought honorably.'] } },
+  { id:'fr', name:'France', prefix:'FS', flag:flagFR,
+    livery:{hull:'#66737f',deck:'#52606a',super:'#8d98a3',accent:'#0055a4',glow:'#ffcf7a'},
+    uniform:{shirt:'#ffffff',trousers:'#1a2b5a',hat:'#ffffff',skin:'#e0b090',hatBand:'#e02020'},
+    voice:{pitch:1.05,rate:1.02},
+    ships:{carrier:'Charles de Gaulle',battleship:'Richelieu',destroyer:'Forbin',submarine:'Suffren',patrol:'Flamant'},
+    chatter:{
+      miss:['Manqué. Adjust and fire again.','Miss. The shell fell short.'],
+      hit:['Touché! Hit on a {cls}!','Direct hit on a {cls}. Magnifique!'],
+      hitCrippled:['{cls} has lost her rudder! Dead in the water!','Stern hit on the {cls}. She cannot move!'],
+      confirmed:['Same {cls}, same place. She has not moved.','Confirmed: {cls} still burning there.'],
+      sunkOwn:['{ship} is lost. Vive la Marine.','We have lost {ship}. Abandon ship!'],
+      sunkEnemy:['Enemy {cls} sunk! Bravo!','The {cls} is going under. Formidable!'],
+      turnStart:['Your orders, Amiral?','The guns are ready. Awaiting command.'],
+      victory:['Victory! The enemy fleet is destroyed!','Total victory. Vive la France!'],
+      defeat:['The fleet is lost. Courage.','Defeat. Lower the colors with honor.'] } },
+  { id:'it', name:'Italy', prefix:'ITS', flag:flagIT,
+    livery:{hull:'#6e7a85',deck:'#59646f',super:'#949ca4',accent:'#009246',glow:'#ffd27a'},
+    uniform:{shirt:'#ffffff',trousers:'#ffffff',hat:'#ffffff',skin:'#d9a37a',hatBand:'#1a2b5a'},
+    voice:{pitch:1.0,rate:1.08},
+    ships:{carrier:'Cavour',battleship:'Vittorio Veneto',destroyer:'Caio Duilio',submarine:'Scire',patrol:'Sirio'},
+    chatter:{
+      miss:['Miss. Adjust the range, again!','Water! No hit. Reload!'],
+      hit:['Colpito! Hit on a {cls}!','Hit on a {cls}! Bravissimi!'],
+      hitCrippled:['{cls} is dead in the water! Her stern is gone!','Stern hit! The {cls} cannot maneuver.'],
+      confirmed:['Same {cls}. She has not moved.','Confirmed: the {cls} is still there.'],
+      sunkOwn:['{ship} is sinking. Abandon ship!','We have lost {ship}. Save the crew!'],
+      sunkEnemy:['Enemy {cls} sunk! Affondata!','The {cls} goes under. Well done!'],
+      turnStart:['Your orders, Ammiraglio?','All guns ready. Awaiting command.'],
+      victory:['Vittoria! The enemy fleet is destroyed!','Victory! Set course for home.'],
+      defeat:['The fleet is lost. We fought with honor.','Defeat. Lower the tricolor.'] } },
+  { id:'ru', name:'Russia', prefix:'RFS', flag:flagRU,
+    livery:{hull:'#5a6670',deck:'#47525c',super:'#7b8791',accent:'#0039a6',glow:'#ffc06b'},
+    uniform:{shirt:'#ffffff',trousers:'#151a24',hat:'#151a24',skin:'#e6b89c',stripes:'#2a4a8a'},
+    voice:{pitch:.75,rate:0.92},
+    ships:{carrier:'Admiral Kuznetsov',battleship:'Pyotr Velikiy',destroyer:'Sovremenny',submarine:'Varshavyanka',patrol:'Grachonok'},
+    chatter:{
+      miss:['Miss. Adjust and fire again.','Water column only. Correct range!'],
+      hit:['Hit on a {cls}! Fire for effect!','Direct hit! The {cls} is burning!'],
+      hitCrippled:['{cls} has lost her screws! Dead in the water!','Stern destroyed! The {cls} cannot move!'],
+      confirmed:['Same {cls}. She has not moved, comrade.','Confirmed: {cls} still in position.'],
+      sunkOwn:['{ship} is lost. Honor the crew.','{ship} is sinking. Abandon ship!'],
+      sunkEnemy:['Enemy {cls} sunk! Ura!','The {cls} goes to the bottom. Excellent!'],
+      turnStart:['Awaiting your orders, Admiral.','All stations ready, comrade Admiral.'],
+      victory:['The enemy fleet is destroyed. Victory!','Pobeda! The sea is ours.'],
+      defeat:['The fleet is lost. We fought to the end.','Defeat. Lower the St. Andrew\'s flag.'] } },
+  { id:'au', name:'Australia', prefix:'HMAS', flag:flagAU,
+    livery:{hull:'#62727e',deck:'#4f5d68',super:'#8894a0',accent:'#ffcd00',glow:'#ffd97a'},
+    uniform:{shirt:'#c9b48a',trousers:'#1b2a45',hat:'#c9b48a',skin:'#d9a37a'},
+    voice:{pitch:.95,rate:1.06},
+    ships:{carrier:'Melbourne',battleship:'Australia',destroyer:'Hobart',submarine:'Collins',patrol:'Armidale'},
+    chatter:{
+      miss:['Missed, mate. Have another go.','Splash, no hit. Adjust and fire.'],
+      hit:['Beauty! Hit on a {cls}!','Got a {cls}! She\'s burning!'],
+      hitCrippled:['{cls} is stuffed! Dead in the water!','Stern hit! The {cls} isn\'t going anywhere.'],
+      confirmed:['Same {cls}, same spot. Hasn\'t moved an inch.','Confirmed: {cls} still sitting there.'],
+      sunkOwn:['We\'ve lost {ship}. Get the crew out.','{ship} is going down. Abandon ship!'],
+      sunkEnemy:['Enemy {cls} sunk! Too easy!','The {cls} has gone under. Good on ya, gunners.'],
+      turnStart:['Your call, Admiral.','Guns ready. What\'s the go?'],
+      victory:['Enemy fleet destroyed. We\'ll shout the first round.','Victory! Well done, all hands.'],
+      defeat:['Fleet\'s lost, mate. We gave it a crack.','Defeat. Strike the ensign.'] } },
+  { id:'ca', name:'Canada', prefix:'HMCS', flag:flagCA,
+    livery:{hull:'#5e6b76',deck:'#4a5661',super:'#828e99',accent:'#ff0000',glow:'#ffcf7a'},
+    uniform:{shirt:'#1b1f2a',trousers:'#1b1f2a',hat:'#ffffff',skin:'#e6b89c'},
+    voice:{pitch:1.0,rate:1.0},
+    ships:{carrier:'Bonaventure',battleship:'Ontario',destroyer:'Iroquois',submarine:'Victoria',patrol:'Kingston'},
+    chatter:{
+      miss:['Miss. Sorry. Adjust and fire again.','Splash, no contact. Reload.'],
+      hit:['Hit on a {cls}! Give \'er!','Direct hit on a {cls}. Beauty!'],
+      hitCrippled:['{cls} is dead in the water! Screws gone!','Stern hit! The {cls} can\'t maneuver.'],
+      confirmed:['Same {cls}, same spot. She hasn\'t moved.','Confirmed: {cls} still there, eh.'],
+      sunkOwn:['We\'ve lost {ship}. Get the crew to the rafts.','{ship} is going down. Abandon ship!'],
+      sunkEnemy:['Enemy {cls} sunk! Good shooting!','The {cls} is gone. Well done, all hands.'],
+      turnStart:['Your orders, Admiral?','Ready for action, Admiral.'],
+      victory:['Enemy fleet destroyed. Victory!','We did it. Set course for home.'],
+      defeat:['Fleet lost. We fought well.','Defeat. Strike the colours.'] } },
+  { id:'br', name:'Brazil', prefix:'BNS', flag:flagBR,
+    livery:{hull:'#67757f',deck:'#55616b',super:'#8b98a4',accent:'#009c3b',glow:'#ffdf00'},
+    uniform:{shirt:'#ffffff',trousers:'#1a2b5a',hat:'#ffffff',skin:'#c98a5a'},
+    voice:{pitch:1.05,rate:1.04},
+    ships:{carrier:'Minas Gerais',battleship:'Sao Paulo',destroyer:'Para',submarine:'Riachuelo',patrol:'Grajau'},
+    chatter:{
+      miss:['Miss. Adjust the range and fire again.','Water only. Reload!'],
+      hit:['Acertamos! Hit on a {cls}!','Direct hit on a {cls}! Keep firing!'],
+      hitCrippled:['{cls} is dead in the water! Stern destroyed!','The {cls} lost her propulsion!'],
+      confirmed:['Same {cls}. She has not moved.','Confirmed: {cls} still there.'],
+      sunkOwn:['{ship} is lost. Abandon ship!','We have lost {ship}. Save the crew!'],
+      sunkEnemy:['Enemy {cls} sunk! Afundado!','The {cls} goes under. Excellent work!'],
+      turnStart:['Your orders, Almirante?','All guns ready. Awaiting command.'],
+      victory:['Vitória! The enemy fleet is destroyed!','Victory! Set course for Rio.'],
+      defeat:['The fleet is lost. We fought with honor.','Defeat. Lower the colors.'] } },
+];
+const NAVY_BY_ID = Object.fromEntries(NAVIES.map(n=>[n.id,n]));
+function navy(id){ return NAVY_BY_ID[id] || NAVIES[0]; }
+function shipFullName(navyId, cls){ const n=navy(navyId); return n.prefix+' '+n.ships[cls]; }
+function cellName(c){ return COLS[c.x]+(c.y+1); }
+function parseCell(s){ const m=/^([A-J])(10|[1-9])$/.exec(String(s).toUpperCase()); return m?{x:COLS.indexOf(m[1]),y:parseInt(m[2],10)-1}:null; }
+function cellKey(c){ return c.x+','+c.y; }
+
+/* ============================================================
