@@ -1280,7 +1280,7 @@ class Link {
     this.hostId='underway-'+this.code.toLowerCase()+'-host'; this.guestId='underway-'+this.code.toLowerCase()+'-guest';
     this.myId=this.role==='host'?this.hostId:this.guestId;
     this.peer=null; this.conn=null; this.state='init'; this.lastHeard=0; this.closed=false;
-    this.idTries=0; this.connectTries=0; this.rcTries=0; this.timers={}; this.suffix='';
+    this.idTries=0; this.connectTries=0; this.rcTries=0; this.idBusy=false; this.timers={}; this.suffix='';
   }
   emit(ev, ...a){ if(this.on[ev]) try{ this.on[ev](...a); }catch(e){ console.error(e); } }
   setState(s, detail){ if(this.state!==s||detail){ this.state=s; this.emit('status', s, detail||''); } }
@@ -1293,6 +1293,7 @@ class Link {
   }
   openPeer(){
     if(this.closed) return;
+    this.idBusy=false;
     try{ if(this.peer){ this.peer.destroy(); } }catch(e){}
     const id=this.myId+this.suffix;
     let p;
@@ -1300,15 +1301,15 @@ class Link {
     this.peer=p;
     p.on('open',()=>{ if(this.closed) return; this.idTries=0; this.rcTries=0; this.setState('registered'); if(this.role==='guest') this.connectToHost(); else this.setState('waiting','waiting for opponent'); });
     p.on('connection',c=>this.onIncoming(c));
-    p.on('disconnected',()=>{ if(this.closed) return; this.setState('reconnecting','signaling lost'); clearTimeout(this.timers.rc); this.timers.rc=setTimeout(()=>{ try{ p.reconnect(); }catch(e){ this.openPeer(); } }, this.backoff()); });
-    p.on('close',()=>{ if(this.closed) return; this.setState('reconnecting','peer closed'); clearTimeout(this.timers.rc); this.timers.rc=setTimeout(()=>this.openPeer(), this.backoff()); });
+    p.on('disconnected',()=>{ if(this.closed||this.idBusy) return; this.setState('reconnecting','signaling lost'); clearTimeout(this.timers.rc); this.timers.rc=setTimeout(()=>{ try{ p.reconnect(); }catch(e){ this.openPeer(); } }, this.backoff()); });
+    p.on('close',()=>{ if(this.closed||this.idBusy) return; this.setState('reconnecting','peer closed'); clearTimeout(this.timers.rc); this.timers.rc=setTimeout(()=>this.openPeer(), this.backoff()); });
     p.on('error',err=>this.onPeerError(err));
   }
   onPeerError(err){
     if(this.closed) return;
     const t=err&&err.type;
     if(t==='unavailable-id'){
-      this.idTries++;
+      this.idBusy=true; clearTimeout(this.timers.rc); this.idTries++;
       if(this.idTries<5){ this.setState('connecting','id busy, retrying'); this.timers.rc=setTimeout(()=>this.openPeer(), 1500); }
       else if(this.role==='guest'){ this.setState('error','room full'); this.emit('roomFull'); }
       else { this.setState('error','room id is held by another session'); this.emit('fatal','This room id is still held by another session. If you just refreshed, wait a moment and retry.'); }
