@@ -1,0 +1,9 @@
+node_modules/
+data/
+public/
+*.log
+*.png
+dev/*.txt
+dev/_pure_bundle.js
+dev/tunnel.*
+dev/peerserver/
