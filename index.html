@@ -2541,7 +2541,7 @@ const Cine = (function(){
     for(let k=0;k<12;k++){ const y=horizon+(k+1)*(H-horizon)/13; ctx.beginPath(); for(let x=0;x<=W;x+=12){ ctx.lineTo(x,y+Math.sin(x*0.02+t*1.2+k)*3+Math.sin(x*0.007-t*0.7)*4); } ctx.stroke(); }
     return {sunX,sunY};
   }
-  function smokeAcross(W,H,t,x,y,scale,seed){ for(let i=0;i<6;i++){ const p=((t*0.06)+i/6+seed*0.13)%1; const px=x+p*W*0.5, py=y-p*H*0.25-Math.sin(p*6+i)*H*0.02; const r=scale*(0.5+p*2.2); ctx.fillStyle='rgba(50,40,50,'+(0.45*(1-p)).toFixed(3)+')'; ctx.beginPath(); ctx.arc(px,py,r,0,TAU); ctx.fill(); } }
+  function smokeAcross(W,H,t,x,y,scale,seed){ for(let i=0;i<10;i++){ const p=((t*0.05)+i/10+seed*0.13)%1; const px=x+p*W*0.45+Math.sin(p*9+i)*scale, py=y-p*H*0.22-Math.sin(p*6+i)*H*0.015; const r=scale*(0.35+p*1.1); ctx.fillStyle='rgba(60,50,60,'+(0.22*(1-p)).toFixed(3)+')'; ctx.beginPath(); ctx.arc(px,py,r,0,TAU); ctx.fill(); } }
   function draw(t){
     const W=window.innerWidth, H=window.innerHeight; ctx.clearRect(0,0,W,H);
     if(kind==='victory') drawVictory(W,H,t); else drawDefeat(W,H,t);
