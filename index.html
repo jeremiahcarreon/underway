@@ -2600,7 +2600,6 @@ const Cine = (function(){
     });
     // water surface overlay in the foreground
     const sea=ctx.createLinearGradient(0,H*0.75,0,H); sea.addColorStop(0,'rgba(10,26,48,0)'); sea.addColorStop(1,'rgba(10,26,48,0.85)'); ctx.fillStyle=sea; ctx.fillRect(0,H*0.75,W,H*0.25);
-    void s;
   }
   return { play, skip };
 })();
