@@ -2553,7 +2553,7 @@ const Cine = (function(){
     let cap=''; if(t>2&&t<7) cap=data.line||''; else if(t>=DUR-4) cap=kind==='victory'?'VICTORY':'DEFEAT'; capEl.textContent=cap; capEl.style.fontSize=(t>=DUR-4?'42px':'18px');
   }
   function drawVictory(W,H,t){
-    const horizon=H*0.52; const s=sky(W,H,t,horizon);
+    const horizon=H*0.52; sky(W,H,t,horizon);
     // enemy ships burning and slipping under on the horizon
     const enemies=(data.them.fleet||[]).slice(0,5);
     enemies.forEach((sh,i)=>{ const x=W*(0.25+i*0.13), y=horizon; const w=W*0.07; const p=Math.max(0,Math.min(1,(t-3-i*1.6)/8)); ctx.save(); ctx.globalAlpha=1-p*0.9; Render.drawShipSide(ctx,sh.cls,data.them.navyId,x-w/2,y-w*0.32+p*w*0.25,w,w*0.32,{silhouette:'#1a1420',listAngle:p*0.35*(i%2?1:-1),sinkP:p*0.6,noWater:true}); ctx.restore(); Render.drawFire(ctx,x,y-w*0.12,w*0.16*(1-p*0.7),t*1000,i); smokeAcross(W,H,t,x,y-w*0.15,w*0.09,i); });
@@ -2566,7 +2566,7 @@ const Cine = (function(){
     });
   }
   function drawDefeat(W,H,t){
-    const horizon=H*0.45; const s=sky(W,H,t,horizon);
+    const horizon=H*0.45; sky(W,H,t,horizon);
     // enemy fleet in the distance, flag catching the light
     const enemies=(data.them.fleet||[]).filter(sh=>!sh.sunk).slice(0,5); const ec=Math.max(1,enemies.length);
     enemies.forEach((sh,i)=>{ const w=W*0.09; const x=W*0.15+i*(W*0.7/ec); Render.drawShipSide(ctx,sh.cls,data.them.navyId,x,horizon-w*0.3,w,w*0.34,{silhouette:'#14101c',flagLit:true,noWater:true}); });
