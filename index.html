@@ -1986,6 +1986,526 @@ const Anim = (function(){
 })();
 
 /* ============================================================
+   SECTION 10 — UI CONTROLLERS (home, lobby, placement, battle, settings, game over)
+   All state changes go through the rules engine; this section only orchestrates.
+   ============================================================ */
+const UI = (function(){
+  const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+  const S={ screen:'home', room:null, role:null, mode:null, aiLevel:'hunter', name:'', navy:null, game:null, link:null, chan:null, rng:null, sid:null, peerSid:null,
+            lobby:{hostNavy:null,guestNavy:null,hostName:'',guestName:'',stage:'lobby',guestOnline:false,hostReady:false,guestReady:false,picker:'host',rematch:false,nextFirst:null},
+            pendingFire:null, oppHistory:null, settings:null, oceans:{own:null,enemy:null,place:null}, place:{pid:'host',fleet:null,sel:0,drag:null,locked:false},
+            target:null, selShip:0, viewAs:'host', tab:'own', gameOverHandled:false, myRematch:false, oppRematch:false, chatLog:[], busy:false, tickTimer:0, gameOverSent:false, linkState:'offline' };
+  const randomId=()=>Math.random().toString(36).slice(2,10)+Date.now().toString(36);
+  const me=()=>S.mode==='net'?S.role:S.viewAs; const them=()=>Rules.other(me());
+  const isMobile=()=>window.innerWidth<=720;
+
+  /* ---------- generic UI helpers ---------- */
+  function showScreen(name){ $$('.screen').forEach(s=>s.classList.toggle('active',s.id==='screen-'+name)); S.screen=name; window.scrollTo(0,0); if(name==='battle'){ Object.values(S.oceans).forEach(o=>o&&o.resize()); } }
+  function overlay(id,on){ const el=$('#'+id); if(el) el.classList.toggle('active',!!on); }
+  function toast(text, cls, ms){ const box=$('#toasts'); const el=document.createElement('div'); el.className='toast '+(cls||''); el.textContent=text; box.appendChild(el); while(box.children.length>4) box.removeChild(box.firstChild); setTimeout(()=>{ el.style.transition='opacity .4s'; el.style.opacity='0'; setTimeout(()=>el.remove(),450); }, ms||2600); }
+  let bannerTimer=0;
+  function banner(text, radar, ms){ const b=$('#banner'); $('#banner-text').textContent=text; $('#banner-radar').classList.toggle('hidden',!radar); b.classList.add('show'); clearTimeout(bannerTimer); if(ms) bannerTimer=setTimeout(()=>b.classList.remove('show'),ms); }
+  function hideBanner(){ $('#banner').classList.remove('show'); clearTimeout(bannerTimer); }
+  function confirmDialog(title, text, yesLabel){ return new Promise(res=>{ $('#confirm-title').textContent=title; $('#confirm-text').textContent=text; $('#confirm-yes').textContent=yesLabel||'Confirm'; overlay('ov-confirm',true); const y=$('#confirm-yes'), n=$('#confirm-no'); const done=v=>{ overlay('ov-confirm',false); y.onclick=null; n.onclick=null; res(v); }; y.onclick=()=>done(true); n.onclick=()=>done(false); }); }
+  function curtain(title, text){ return new Promise(res=>{ $('#curtain-title').textContent=title; $('#curtain-text').textContent=text||''; const c=$('#curtain'); c.classList.add('active'); $('#curtain-go').onclick=()=>{ c.classList.remove('active'); Sfx.unlock(); res(); }; }); }
+  function fill(tpl, vars){ return tpl.replace(/\{(\w+)\}/g,(m,k)=>vars&&vars[k]!=null?vars[k]:m); }
+  function chat(navyId, key, vars, cls){ const n=navy(navyId); const lines=n.chatter[key]||[]; if(!lines.length) return; const line=fill(lines[Math.floor(Math.random()*lines.length)],vars||{}); toast(line, cls||'chat', 3200); S.chatLog.push({n:S.game?S.game.log.length:0, text:line, navy:n.name}); appendLog('sys chat', '['+n.prefix+'] '+line); Sfx.speak(line, navyId); }
+  function appendLog(cls, text, turn){ const box=$('#log'); const d=document.createElement('div'); d.className=cls; if(turn!=null){ const t=document.createElement('span'); t.className='t'; t.textContent='T'+turn; d.appendChild(t); } d.appendChild(document.createTextNode(text)); box.appendChild(d); box.scrollTop=box.scrollHeight; }
+  function shipLabel(pid, cls){ const p=S.game.players[pid]; return shipFullName(p.navy||'us', cls); }
+  function linkFor(room){ return location.origin.startsWith('http') ? location.origin+location.pathname+'?room='+room : location.href.split('?')[0]+'?room='+room; }
+  async function copyLink(){ const url=linkFor(S.room); try{ await navigator.clipboard.writeText(url); toast('Link copied: '+url,'',2500); }catch(e){ prompt('Copy this link', url); } }
+  async function shareLink(){ const url=linkFor(S.room); if(navigator.share){ try{ await navigator.share({title:'UNDERWAY — join my battle', text:'Join my naval battle. Room '+S.room, url}); return; }catch(e){ if(e&&e.name==='AbortError') return; } } copyLink(); }
+
+  /* ---------- settings ---------- */
+  function loadSettings(){ S.settings=Store.loadSettings(); applySettings(); }
+  function applySettings(){ const s=S.settings; Sfx.applySettings(s); Anim.settings.fast=!!s.fast; Anim.settings.reduced=!!s.reduced; Render.setReduced(!!s.reduced); $('#set-volume').value=String(Math.round(s.volume*100)); ['mute','voice','fast','reduced','ambient'].forEach(k=>$('#set-'+k).classList.toggle('on',!!s[k])); }
+  function saveSettings(){ Store.saveSettings(S.settings); applySettings(); }
+  function bindSettings(){
+    $('#set-volume').addEventListener('input',e=>{ S.settings.volume=parseInt(e.target.value,10)/100; saveSettings(); });
+    ['mute','voice','fast','reduced','ambient'].forEach(k=>$('#set-'+k).addEventListener('click',()=>{ Sfx.unlock(); S.settings[k]=!S.settings[k]; saveSettings(); Sfx.click(); }));
+    $('#btn-settings-close').addEventListener('click',()=>overlay('ov-settings',false));
+    $('#btn-settings').addEventListener('click',()=>{ Sfx.unlock(); overlay('ov-settings',true); });
+    $('#btn-settings-home').addEventListener('click',()=>{ Sfx.unlock(); overlay('ov-settings',true); });
+  }
+
+  /* ---------- persistence ---------- */
+  function save(){ if(!S.room||!S.game) return; Store.save({ room:S.room, role:S.role, mode:S.mode, aiLevel:S.aiLevel, name:S.name, navy:S.navy, game:S.game, net:S.chan?S.chan.snapshot():null, rngState:S.rng?S.rng.state():null,
+    ui:{ sid:S.sid, peerSid:S.peerSid, lobby:S.lobby, pendingFire:S.pendingFire, oppHistory:S.oppHistory, place:{pid:S.place.pid,fleet:S.place.fleet,locked:S.place.locked}, viewAs:S.viewAs, chatLog:S.chatLog.slice(-60), gameOverSent:S.gameOverSent, myRematch:S.myRematch, oppRematch:S.oppRematch, screen:S.screen } }); }
+  function restore(data){
+    S.room=data.room; S.role=data.role; S.mode=data.mode; S.aiLevel=data.aiLevel||'hunter'; S.name=data.name||S.name; S.navy=data.navy; S.game=data.game; const ui=data.ui||{};
+    S.sid=ui.sid||randomId(); S.peerSid=ui.peerSid||null; S.lobby=Object.assign(S.lobby,ui.lobby||{}); S.pendingFire=ui.pendingFire||null; S.oppHistory=ui.oppHistory||null; S.place=Object.assign(S.place,ui.place||{}); S.viewAs=ui.viewAs||(S.mode==='net'?S.role:'host'); S.chatLog=ui.chatLog||[]; S.gameOverSent=!!ui.gameOverSent; S.myRematch=!!ui.myRematch; S.oppRematch=!!ui.oppRematch; S.gameOverHandled=false;
+    S.rng=RNG(data.rngState||hashString(S.room));
+    history.replaceState(null,'','?room='+S.room);
+    if(S.mode==='net'){ connect(); if(data.net){ S.chan.restore(data.net); } }
+    const st=S.game.stage;
+    if(st==='lobby'){ showScreen('lobby'); renderLobby(); }
+    else if(st==='placement'){ if(S.place.locked){ showScreen('place'); renderPlacement(); $('#place-status').textContent='Fleet locked. Waiting for the opponent…'; } else enterPlacement(S.place.pid||me(), true); }
+    else if(st==='battle'){ enterBattle(); }
+    else if(st==='over'){ S.gameOverHandled=true; showOver(); }
+  }
+
+  /* ---------- session creation ---------- */
+  function newGame(room, mode){ const g=Rules.createGame({room, mode, seed:hashString(room), aiLevel:S.aiLevel, hostName:S.mode==='net'&&S.role==='guest'?'Host':S.name, guestName:mode==='ai'?'Admiral AI':(mode==='hotseat'?'Player 2':'Guest')}); if(mode==='net'&&S.role==='guest') g.players.guest.name=S.name; if(mode==='hotseat') g.players.host.name=S.name||'Player 1'; return g; }
+  function resetSessionState(){ S.pendingFire=null; S.oppHistory=null; S.gameOverHandled=false; S.gameOverSent=false; S.myRematch=false; S.oppRematch=false; S.chatLog=[]; S.target=null; S.selShip=0; S.place={pid:'host',fleet:null,sel:0,drag:null,locked:false}; S.lobby.hostReady=false; S.lobby.guestReady=false; S.lobby.stage='lobby'; }
+  function startNet(role, code){
+    S.name=($('#home-name').value||'Admiral').trim(); S.settings.name=S.name; Store.saveSettings(S.settings);
+    S.mode='net'; S.role=role; S.room=code.toUpperCase(); S.sid=randomId(); S.peerSid=null; S.navy=null; resetSessionState();
+    S.lobby={hostNavy:null,guestNavy:null,hostName:role==='host'?S.name:'',guestName:role==='guest'?S.name:'',stage:'lobby',guestOnline:false,hostReady:false,guestReady:false,picker:'host',rematch:false,nextFirst:null};
+    S.game=newGame(S.room,'net'); S.viewAs=role; S.rng=RNG(hashString(S.room+S.sid));
+    history.replaceState(null,'','?room='+S.room);
+    connect(); showScreen('lobby'); renderLobby(); save();
+  }
+  function startSolo(mode){
+    S.name=($('#home-name').value||'Admiral').trim(); S.settings.name=S.name; Store.saveSettings(S.settings);
+    S.mode=mode; S.role='host'; S.room=(mode==='ai'?'AI':'HS')+randomRoomCode().slice(0,4); S.sid=randomId(); S.navy=null; resetSessionState(); disconnect();
+    S.lobby={hostNavy:null,guestNavy:null,hostName:S.name,guestName:mode==='ai'?'Admiral AI':'Player 2',stage:'lobby',guestOnline:true,hostReady:false,guestReady:false,picker:'host',rematch:false,nextFirst:null};
+    S.game=newGame(S.room,mode); S.viewAs='host'; S.rng=RNG(hashString(S.room+S.sid)+Date.now()%100000);
+    history.replaceState(null,'','?room='+S.room);
+    showScreen('lobby'); renderLobby(); save();
+  }
+  function leaveToHome(){ disconnect(); if(S.room) Store.remove(S.room); S.room=null; S.game=null; history.replaceState(null,'',location.pathname); hideBanner(); showScreen('home'); renderHome(); }
+
+  /* ---------- networking ---------- */
+  function connect(){
+    disconnect();
+    S.chan=new Net.Channel({send:env=>S.link&&S.link.send(env), onMessage:handleMessage, onGap:()=>{ if(S.chan) S.chan.send('RESYNC_REQUEST',{lastSeqIn:S.chan.lastSeqIn}); }});
+    S.link=new Net.Link({role:S.role, code:S.room, on:{
+      status:(st,detail)=>{ S.linkState=st; renderConn(st,detail); if(st==='online'&&S.role==='host'){ S.lobby.guestOnline=true; } if(st!=='online'&&S.role==='host'){ S.lobby.guestOnline=false; } if(S.screen==='lobby') renderLobby(); },
+      open:()=>{ sendHello(); S.chan.send('RESYNC_REQUEST',{lastSeqIn:S.chan.lastSeqIn}); S.chan.resendFrom(S.chan.lastAckIn); if(S.role==='host') sendLobby(); },
+      data:env=>{ S.chan.receive(env); },
+      roomFull:()=>{ showError('Room full','That room already has two players. Ask for a new room code.', false); },
+      fatal:msg=>{ showError('Connection problem', msg, true); },
+      signalError:msg=>{ renderConn('reconnecting', msg); },
+    }});
+    S.link.start();
+    S.tickTimer=setInterval(()=>{ if(S.chan) S.chan.tick(); }, 1000);
+  }
+  function disconnect(){ if(S.link){ S.link.destroy(); S.link=null; } S.chan=null; clearInterval(S.tickTimer); renderConn('offline',''); }
+  function send(type, payload){ if(S.chan) S.chan.send(type, payload); save(); }
+  function sendHello(){ S.chan.send('HELLO',{name:S.name, navy:S.navy, version:CLIENT_VERSION, sid:S.sid, stage:S.game?S.game.stage:'lobby', turn:S.game?S.game.turn:0}); }
+  function sendLobby(){ if(S.role!=='host') return; send('LOBBY_STATE',{hostNavy:S.lobby.hostNavy, guestNavy:S.lobby.guestNavy, hostName:S.lobby.hostName, guestName:S.lobby.guestName, stage:S.lobby.stage, hostReady:S.lobby.hostReady, guestReady:S.lobby.guestReady, rematch:S.lobby.rematch, nextFirst:S.lobby.nextFirst}); }
+  function renderConn(st, detail){
+    const label={init:'offline',connecting:'connecting…',registered:'registered',waiting:S.role==='host'?'waiting for opponent':'waiting for host',online:'connected',reconnecting:'reconnecting…',error:'error',closed:'offline',offline:'offline'}[st]||st;
+    ['#lobby-conn','#place-conn','#battle-conn'].forEach(sel=>{ const el=$(sel); if(!el) return; el.className='conn '+(st==='online'?'online':st==='reconnecting'||st==='connecting'||st==='waiting'||st==='registered'?'reconnecting':'offline'); el.querySelector('.txt').textContent=S.mode==='net'?label+(detail&&st!=='online'?' ('+detail+')':''):(S.mode==='ai'?'versus AI':S.mode==='hotseat'?'hotseat':''); });
+  }
+  function showError(title, text, retry){ $('#error-title').textContent=title; $('#error-text').textContent=text; $('#error-retry').classList.toggle('hidden',!retry); overlay('ov-error',true); }
+  function handleMessage(type, p, env){
+    p=p||{};
+    switch(type){
+      case 'PING': if(S.chan) S.chan.send('PONG',null); break;
+      case 'PONG': case 'ACK': break;
+      case 'HELLO': {
+        if(S.peerSid && p.sid && S.peerSid!==p.sid){
+          // The opponent started a brand-new session: their counters restarted. Reset ours and drop any half-played game.
+          S.chan.seqOut=0; S.chan.lastSeqIn=0; S.chan.lastAckIn=0; S.chan.outbox=[]; S.chan.pending.clear();
+          if(S.game.stage!=='lobby'){ toast('Opponent rejoined with a new session. Back to the lobby.','err',4000); resetToLobby(false); }
+        }
+        S.peerSid=p.sid||S.peerSid;
+        if(S.role==='host'){ S.lobby.guestName=p.name||'Guest'; S.game.players.guest.name=S.lobby.guestName; S.lobby.guestOnline=true; if(p.navy && p.navy!==S.lobby.hostNavy && !S.lobby.guestNavy) S.lobby.guestNavy=p.navy; sendLobby(); }
+        else { S.lobby.hostName=p.name||'Host'; S.game.players.host.name=S.lobby.hostName; }
+        renderLobby(); save(); break; }
+      case 'NAVY_PICK': if(S.role==='host'){ if(!p.navy||p.navy===S.lobby.hostNavy||!NAVY_BY_ID[p.navy]){ send('NAVY_REJECTED',{navy:p.navy, reason:'That navy is taken by the host. Please pick another.'}); } else { S.lobby.guestNavy=p.navy; S.game.players.guest.navy=p.navy; } sendLobby(); renderLobby(); save(); } break;
+      case 'NAVY_REJECTED': if(S.role==='guest'){ S.navy=null; S.lobby.guestNavy=null; toast(p.reason||'Navy rejected — pick again.','err',3500); Sfx.buzz(); renderLobby(); save(); } break;
+      case 'LOBBY_STATE': if(S.role==='guest'){ applyLobby(p); } break;
+      case 'READY': { const who=S.role==='host'?'guest':'host'; S.lobby[who+'Ready']=true; S.game.players[who].ready=true; if(S.role==='host') maybeStart(); else $('#place-status').textContent='Host is ready.'; if(S.screen==='place') renderPlacement(); save(); break; }
+      case 'START': if(S.game.stage!=='battle'){ beginBattle(p.seed, p.first, !!p.rematch); } break;
+      case 'FIRE': onRemoteFire(p); break;
+      case 'RESULT': onRemoteResult(p); break;
+      case 'END_TURN': { const r=Rules.remoteEndTurn(S.game, them()); if(r.ok){ S.game=r.game; appendLog('them','Enemy fleet maneuvered — no shot this turn.', S.game.turn-1); afterAction(); } break; }
+      case 'GAME_OVER': onRemoteGameOver(p); break;
+      case 'REMATCH': S.oppRematch=true; $('#over-status').textContent='Opponent wants a rematch.'; maybeRematch(); save(); break;
+      case 'RESYNC_REQUEST': if(S.chan){ S.chan.resendFrom(p.lastSeqIn); S.chan.send('RESYNC_STATE',{lastSeqIn:S.chan.lastSeqIn, stage:S.game.stage, turn:S.game.turn}); } break;
+      case 'RESYNC_STATE': if(S.chan) S.chan.resendFrom(p.lastSeqIn); break;
+      default: console.warn('unknown message', type, p);
+    }
+  }
+  function applyLobby(p){
+    const wasStage=S.lobby.stage;
+    Object.assign(S.lobby,{hostNavy:p.hostNavy, guestNavy:p.guestNavy, hostName:p.hostName||S.lobby.hostName, guestName:p.guestName||S.lobby.guestName, stage:p.stage||'lobby', hostReady:!!p.hostReady, guestReady:!!p.guestReady, rematch:!!p.rematch, nextFirst:p.nextFirst||null});
+    S.game.players.host.name=S.lobby.hostName; S.game.players.guest.name=S.lobby.guestName; S.game.players.host.navy=S.lobby.hostNavy; S.game.players.guest.navy=S.lobby.guestNavy;
+    if(S.role==='guest'){ if(S.navy && S.lobby.guestNavy!==S.navy && S.lobby.hostNavy===S.navy){ S.navy=null; toast('The host took that navy. Pick again.','err',3500); Sfx.buzz(); } else if(S.lobby.guestNavy) S.navy=S.lobby.guestNavy; }
+    if(S.lobby.stage==='placement' && wasStage!=='placement' && S.game.stage==='lobby'){ S.game.stage='placement'; enterPlacement(me()); }
+    else if(S.lobby.stage==='lobby' && S.game.stage!=='lobby'){ resetToLobby(true); }
+    if(S.screen==='lobby') renderLobby(); save();
+  }
+
+  /* ---------- home ---------- */
+  function renderHome(){ $('#home-name').value=S.settings.name||''; const last=Store.getLast(); const has=last&&Store.load(last); $('#resume-panel').classList.toggle('hidden',!has); if(has) $('#resume-last-code').textContent=last; $$('.ailvl').forEach(b=>b.classList.toggle('selected',b.dataset.level===S.aiLevel)); }
+  function bindHome(){
+    $('#btn-create').addEventListener('click',()=>{ Sfx.unlock(); Sfx.confirm(); startNet('host', randomRoomCode()); });
+    $('#btn-join-toggle').addEventListener('click',()=>{ Sfx.unlock(); $('#join-panel').classList.toggle('hidden'); $('#join-code').focus(); });
+    $('#btn-join').addEventListener('click',()=>{ const code=$('#join-code').value.trim().toUpperCase(); if(code.length!==6){ toast('Enter the 6-character room code.','err'); Sfx.buzz(); return; } Sfx.unlock(); Sfx.confirm(); joinRoom(code); });
+    $('#join-code').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#btn-join').click(); });
+    $$('.ailvl').forEach(b=>b.addEventListener('click',()=>{ S.aiLevel=b.dataset.level; $$('.ailvl').forEach(x=>x.classList.toggle('selected',x===b)); Sfx.click(); }));
+    $('#btn-ai').addEventListener('click',()=>{ Sfx.unlock(); Sfx.confirm(); startSolo('ai'); });
+    $('#btn-hotseat').addEventListener('click',()=>{ Sfx.unlock(); Sfx.confirm(); startSolo('hotseat'); });
+    $('#btn-resume-last').addEventListener('click',()=>{ Sfx.unlock(); const last=Store.getLast(); const d=last&&Store.load(last); if(d) restore(d); else renderHome(); });
+    $('#btn-howto').addEventListener('click',()=>overlay('ov-howto',true)); $('#howto-close').addEventListener('click',()=>overlay('ov-howto',false));
+    $('#error-home').addEventListener('click',()=>{ overlay('ov-error',false); leaveToHome(); });
+    $('#error-retry').addEventListener('click',()=>{ overlay('ov-error',false); if(S.link) S.link.retryNow(); else if(S.mode==='net') connect(); });
+  }
+  function joinRoom(code){
+    const saved=Store.load(code);
+    if(saved){ offerResume(saved); return; }
+    startNet('guest', code);
+  }
+  function offerResume(saved){
+    const g=saved.game; const desc=(saved.mode==='net'?'Online battle as '+saved.role:saved.mode==='ai'?'Battle versus AI':'Hotseat battle')+' — stage: '+g.stage+(g.stage==='battle'?', turn '+g.turn:'')+'.';
+    $('#resume-text').textContent=desc+' Resume where you left off, or abandon it?'; overlay('ov-resume',true);
+    $('#resume-yes').onclick=()=>{ overlay('ov-resume',false); Sfx.unlock(); restore(saved); };
+    $('#resume-abandon').onclick=async()=>{ overlay('ov-resume',false); Store.remove(saved.room); if(saved.mode==='net'){ if(saved.role==='guest') startNet('guest', saved.room); else startNet('host', saved.room); } else { history.replaceState(null,'',location.pathname); showScreen('home'); renderHome(); } };
+  }
+
+  /* ---------- lobby ---------- */
+  function takenBy(navyId){ const l=S.lobby; if(l.hostNavy===navyId) return 'host'; if(l.guestNavy===navyId) return 'guest'; return null; }
+  function myLobbyPid(){ return S.mode==='hotseat'?S.lobby.picker:(S.mode==='net'?S.role:'host'); }
+  function renderLobby(){
+    const l=S.lobby; $('#lobby-code').textContent=S.room||'------';
+    const pid=myLobbyPid();
+    const hostBox=$('#lobby-host'), guestBox=$('#lobby-guest');
+    hostBox.querySelector('.pname').textContent=(l.hostName||'Host')+(pid==='host'?' (you)':''); hostBox.querySelector('.pnavy').textContent=l.hostNavy?navy(l.hostNavy).name:'choosing navy…'; hostBox.querySelector('.flagslot').innerHTML=l.hostNavy?Render.flagSVG(l.hostNavy,48,30):'<span class="livery" style="width:48px;height:30px;background:#223"></span>';
+    guestBox.querySelector('.pname').textContent=(l.guestName||(S.mode==='ai'?'Admiral AI':'Guest'))+(pid==='guest'?' (you)':''); guestBox.querySelector('.pnavy').textContent=l.guestNavy?navy(l.guestNavy).name:(S.mode==='net'&&!l.guestOnline?'not connected':'choosing navy…'); guestBox.querySelector('.flagslot').innerHTML=l.guestNavy?Render.flagSVG(l.guestNavy,48,30):'<span class="livery" style="width:48px;height:30px;background:#223"></span>';
+    const grid=$('#navy-grid'); grid.innerHTML='';
+    NAVIES.forEach(n=>{ const b=document.createElement('button'); b.className='navybtn'; const owner=takenBy(n.id); const mine=(pid==='host'?l.hostNavy:l.guestNavy)===n.id; if(mine) b.classList.add('selected'); else if(owner) b.classList.add('locked'); b.innerHTML=Render.flagSVG(n.id,64,40)+'<span>'+n.name+'</span>'; b.title=n.prefix+' — '+Object.values(n.ships).join(', '); b.addEventListener('click',()=>pickNavy(n.id)); grid.appendChild(b); });
+    let status=''; const startBtn=$('#btn-lobby-start');
+    if(S.mode==='net'){ if(S.role==='host'){ status=l.guestOnline?(l.guestNavy&&l.hostNavy?'Both navies chosen. Confirm to start placing fleets.':'Opponent connected. Choose navies.'):'Share the room code or link. Waiting for an opponent to join…'; startBtn.classList.remove('hidden'); startBtn.disabled=!(l.guestOnline&&l.hostNavy&&l.guestNavy); } else { status=l.hostNavy?'Host has chosen '+navy(l.hostNavy).name+'. Pick your navy; the host confirms.':'Connected. Waiting for the host to choose…'; startBtn.classList.add('hidden'); } }
+    else if(S.mode==='ai'){ status='Pick your navy. The AI ('+S.aiLevel+') takes one of the rest.'; startBtn.classList.remove('hidden'); startBtn.disabled=!(l.hostNavy&&l.guestNavy); }
+    else { status=(pid==='host'?(l.hostName||'Player 1'):(l.guestName||'Player 2'))+' picks a navy'+(pid==='host'?', then hand over to Player 2.':'.'); startBtn.classList.remove('hidden'); startBtn.textContent=pid==='host'&&!l.guestNavy?'Next: Player 2 picks':'Confirm & place fleets'; startBtn.disabled=pid==='host'?!l.hostNavy:!(l.hostNavy&&l.guestNavy); }
+    if(S.mode!=='hotseat') startBtn.textContent='Confirm & place fleets';
+    $('#lobby-status').textContent=status;
+  }
+  function pickNavy(id){
+    Sfx.unlock(); const l=S.lobby; const pid=myLobbyPid();
+    if(S.mode==='net' && S.role==='guest'){ if(l.hostNavy===id){ toast('The host holds that navy.','err'); Sfx.buzz(); return; } S.navy=id; l.guestNavy=id; send('NAVY_PICK',{navy:id}); Sfx.click(); renderLobby(); return; }
+    if(pid==='host'){ l.hostNavy=id; S.navy=id; if(l.guestNavy===id){ l.guestNavy=null; if(S.mode==='net') send('NAVY_REJECTED',{navy:id, reason:'The host chose that navy. Please pick another.'}); } if(S.mode==='ai') aiPickNavy(); }
+    else { if(l.hostNavy===id){ toast('Player 1 holds that navy.','err'); Sfx.buzz(); return; } l.guestNavy=id; }
+    S.game.players.host.navy=l.hostNavy; S.game.players.guest.navy=l.guestNavy;
+    Sfx.click(); if(S.mode==='net') sendLobby(); renderLobby(); save();
+  }
+  function aiPickNavy(){ const l=S.lobby; const rest=NAVIES.filter(n=>n.id!==l.hostNavy); if(!l.guestNavy||l.guestNavy===l.hostNavy){ l.guestNavy=S.rng.pick(rest).id; S.game.players.guest.navy=l.guestNavy; } }
+  function randomNavy(){ const pid=myLobbyPid(); const other=pid==='host'?S.lobby.guestNavy:S.lobby.hostNavy; const rest=NAVIES.filter(n=>n.id!==other); pickNavy(rest[Math.floor(Math.random()*rest.length)].id); }
+  function lobbyStart(){
+    const l=S.lobby; Sfx.unlock();
+    if(S.mode==='hotseat' && l.picker==='host' && !l.guestNavy){ l.picker='guest'; Sfx.confirm(); renderLobby(); save(); return; }
+    if(!(l.hostNavy&&l.guestNavy)){ toast('Both navies must be chosen.','err'); return; }
+    S.game.players.host.navy=l.hostNavy; S.game.players.guest.navy=l.guestNavy; S.game.players.host.name=l.hostName||S.game.players.host.name; S.game.players.guest.name=l.guestName||S.game.players.guest.name;
+    l.stage='placement'; S.game.stage='placement'; Sfx.confirm();
+    if(S.mode==='net'){ sendLobby(); enterPlacement('host'); }
+    else if(S.mode==='ai'){ enterPlacement('host'); }
+    else { l.picker='host'; enterPlacement('host'); }
+    save();
+  }
+  function bindLobby(){
+    $('#btn-copy').addEventListener('click',copyLink); $('#btn-share').addEventListener('click',shareLink);
+    $('#btn-navy-random').addEventListener('click',randomNavy);
+    $('#btn-lobby-start').addEventListener('click',lobbyStart);
+    $('#btn-lobby-leave').addEventListener('click',async()=>{ if(await confirmDialog('Leave room','Leave this room and forget its saved state?','Leave')) leaveToHome(); });
+  }
+  function resetToLobby(fromRemote){
+    // Rematch or a fresh peer: keep names/navies, rebuild the game.
+    const l=S.lobby; const first=l.nextFirst; const g=newGame(S.room, S.mode); g.players.host.name=l.hostName||g.players.host.name; g.players.guest.name=l.guestName||g.players.guest.name; g.players.host.navy=l.hostNavy; g.players.guest.navy=l.guestNavy; g.rematches=(S.game&&S.game.rematches||0)+1;
+    S.game=g; resetSessionState(); S.lobby.stage='lobby'; S.lobby.nextFirst=first; S.lobby.rematch=!!first; hideBanner();
+    Object.values(S.oceans).forEach(o=>{ if(o){ o.clearEffects(); o.shipFx={}; o.pegs=null; o.fleet=null; } });
+    showScreen('lobby'); renderLobby(); save(); void fromRemote;
+  }
+
+  /* ---------- placement ---------- */
+  function placeOcean(){ if(!S.oceans.place){ S.oceans.place=Render.register(Render.createOcean($('#placeCanvas'),{kind:'own'})); bindPlaceCanvas(); } return S.oceans.place; }
+  function enterPlacement(pid, keep){
+    S.place.pid=pid; if(!keep||!S.place.fleet){ S.place.fleet=Rules.emptyFleet(); S.place.sel=0; S.place.locked=false; }
+    showScreen('place'); const o=placeOcean(); o.resize(); o.navyId=S.game.players[pid].navy||'us';
+    $('#place-title').textContent=(S.mode==='hotseat'?S.game.players[pid].name+': place your fleet':'Place your fleet, Admiral'); $('#place-label').textContent=(S.mode==='hotseat'?S.game.players[pid].name:'Your')+' ocean · '+navy(o.navyId).name;
+    $('#place-status').textContent=''; renderPlacement(); save();
+  }
+  function renderPlacement(){
+    const o=S.oceans.place; const f=S.place.fleet; o.fleet=f; o.selected=S.place.sel; o.turn=1;
+    const dock=$('#placeDock'); dock.innerHTML='';
+    f.forEach((s,i)=>{ const row=document.createElement('div'); row.className='dockship'+(i===S.place.sel?' selected':''); const cv=document.createElement('canvas'); cv.width=200; cv.height=68; row.appendChild(cv);
+      const info=document.createElement('div'); info.innerHTML='<div class="dname">'+shipLabel(S.place.pid,s.cls)+'</div><div class="dcls">'+SHIP_CLASSES[s.cls].name+' · '+SHIP_CLASSES[s.cls].size+' sections'+(s.bow?' · bow '+cellName(s.bow)+' '+s.heading:'')+'</div>'; row.appendChild(info);
+      const st=document.createElement('span'); st.className='mob '+(s.bow?'placed':'unplaced'); st.textContent=s.bow?'placed':'tap cell'; row.appendChild(st);
+      row.addEventListener('click',()=>{ Sfx.unlock(); if(S.place.locked) return; if(S.place.sel===i && s.bow) cycleHeading(i); else { S.place.sel=i; Sfx.click(); renderPlacement(); } });
+      dock.appendChild(row); drawDockShip(cv, s.cls, o.navyId, s); });
+    const v=Rules.validatePlacement(f); $('#btn-ready').disabled=!v.ok||S.place.locked; $('#place-hint').textContent=S.place.locked?'Fleet locked.':(v.ok?'All ships placed. Adjust freely, then press Ready.':(S.place.sel>=0&&!f[S.place.sel].bow?'Tap a cell to place the bow of the '+SHIP_CLASSES[f[S.place.sel].cls].name+' (heading '+f[S.place.sel].heading+'). Tap the placed ship to cycle its heading; drag to reposition.':v.reason));
+  }
+  function drawDockShip(cv, cls, navyId, ship, opts){ const c=cv.getContext('2d'); c.clearRect(0,0,cv.width,cv.height); Render.drawShipSide(c, cls, navyId, 6, 4, cv.width-12, cv.height-8, Object.assign({hits:ship?ship.hits:[], mobility:ship?Rules.mobility(ship):'ok', t:performance.now()}, opts||{})); }
+  function cycleHeading(i){ const f=S.place.fleet; const s=f[i]; if(!s.bow) return; let h=s.heading; for(let k=0;k<4;k++){ h=Rules.rotateHeading(h,true); const r=Rules.placeShip(f,i,s.bow,h); if(r.ok){ S.place.fleet=r.fleet; Sfx.click(); renderPlacement(); return; } } Sfx.buzz(); toast('No legal heading from this bow cell — move the ship.','err'); }
+  function tryPlace(i, bow, heading, silent){ const r=Rules.placeShip(S.place.fleet,i,bow,heading); if(r.ok){ S.place.fleet=r.fleet; if(!silent){ Sfx.confirm(); } renderPlacement(); return true; } if(!silent){ Sfx.buzz(); toast('Cannot place: '+r.reason,'err'); Anim.shake($('#placeCanvas')); } return false; }
+  function bindPlaceCanvas(){
+    const o=S.oceans.place; const cv=o.canvas; let down=null;
+    const shipAt=cell=>{ for(let i=0;i<S.place.fleet.length;i++){ const s=S.place.fleet[i]; if(!s.bow) continue; const sec=Rules.sectionAt(s,cell); if(sec>=0) return {i,sec}; } return null; };
+    cv.addEventListener('pointerdown',e=>{ if(S.place.locked) return; Sfx.unlock(); const cell=o.cellAt(e.clientX,e.clientY); if(!cell) return; e.preventDefault(); cv.setPointerCapture(e.pointerId);
+      const hit=shipAt(cell);
+      if(hit){ S.place.sel=hit.i; down={i:hit.i, sec:hit.sec, start:cell, moved:false, orig:{bow:S.place.fleet[hit.i].bow, heading:S.place.fleet[hit.i].heading}}; renderPlacement(); }
+      else { const i=S.place.sel; if(i<0) return; const s=S.place.fleet[i]; tryPlace(i, cell, s.heading); down=null; } });
+    cv.addEventListener('pointermove',e=>{ const cell=o.cellAt(e.clientX,e.clientY); o.hover=cell; if(!down||!cell) return; if(cell.x!==down.start.x||cell.y!==down.start.y) down.moved=true; if(!down.moved) return;
+      const s=S.place.fleet[down.i]; const d=DIR[s.heading]; const bow={x:cell.x+d.x*down.sec, y:cell.y+d.y*down.sec}; o.ghost=Object.assign({},s,{bow}); o.ghostOk=Rules.canPlace(S.place.fleet,down.i,bow,s.heading).ok; });
+    const up=e=>{ o.hover=null; if(!down) return; const d=down; down=null; o.ghost=null; const cell=o.cellAt(e.clientX,e.clientY);
+      if(!d.moved){ cycleHeading(d.i); return; }
+      if(!cell) return; const s=S.place.fleet[d.i]; const dir=DIR[s.heading]; const bow={x:cell.x+dir.x*d.sec, y:cell.y+dir.y*d.sec}; tryPlace(d.i,bow,s.heading); };
+    cv.addEventListener('pointerup',up); cv.addEventListener('pointercancel',()=>{ down=null; o.ghost=null; o.hover=null; });
+    cv.addEventListener('pointerleave',()=>{ if(!down) o.hover=null; });
+  }
+  function bindPlacement(){
+    $('#btn-random-fleet').addEventListener('click',()=>{ if(S.place.locked) return; Sfx.unlock(); S.place.fleet=Rules.randomFleet(S.rng); Sfx.confirm(); renderPlacement(); save(); });
+    $$('.tpl').forEach(b=>b.addEventListener('click',()=>{ if(S.place.locked) return; Sfx.unlock(); S.place.fleet=Rules.templateFleet(b.dataset.tpl); Sfx.confirm(); renderPlacement(); save(); }));
+    $('#btn-place-rotate').addEventListener('click',()=>{ if(S.place.locked) return; Sfx.unlock(); if(S.place.sel>=0) cycleHeading(S.place.sel); });
+    $('#btn-place-clear').addEventListener('click',()=>{ if(S.place.locked) return; S.place.fleet=Rules.emptyFleet(); S.place.sel=0; Sfx.click(); renderPlacement(); save(); });
+    $('#btn-place-back').addEventListener('click',async()=>{ if(S.mode==='net'){ if(await confirmDialog('Leave battle','Leave this room? The saved state will be removed.','Leave')) leaveToHome(); } else { S.game.stage='lobby'; S.lobby.stage='lobby'; showScreen('lobby'); renderLobby(); save(); } });
+    $('#btn-ready').addEventListener('click',ready);
+  }
+  async function ready(){
+    Sfx.unlock(); const pid=S.place.pid; const r=Rules.setFleet(S.game,pid,S.place.fleet); if(!r.ok){ toast(r.reason,'err'); Sfx.buzz(); return; }
+    S.game=r.game; S.place.locked=true; Sfx.confirm(); renderPlacement();
+    if(S.mode==='net'){ S.lobby[pid+'Ready']=true; send('READY',{}); $('#place-status').textContent='Fleet locked. Waiting for the opponent to be ready…'; save(); if(S.role==='host') maybeStart(); return; }
+    if(S.mode==='ai'){ let ag=Rules.setFleet(S.game,'guest',AI.placeFleet(S.rng)).game; ag.ai=AI.initMemory(S.aiLevel); ag.aiLevel=S.aiLevel; S.game=ag; const seed=S.rng.int(1e9); const first=S.lobby.nextFirst||(RNG(seed).chance(0.5)?'host':'guest'); beginBattle(seed, first, !!S.lobby.nextFirst); return; }
+    // hotseat
+    if(pid==='host'){ await curtain('Pass the device to '+S.game.players.guest.name, 'Player 2 places their fleet next. No peeking.'); enterPlacement('guest'); }
+    else { const seed=S.rng.int(1e9); const first=S.lobby.nextFirst||(RNG(seed).chance(0.5)?'host':'guest'); beginBattle(seed, first, !!S.lobby.nextFirst); }
+  }
+  function maybeStart(){ if(S.role!=='host'||S.game.stage!=='placement') return; if(S.game.players.host.ready && S.game.players.guest.ready){ const seed=Math.floor(Math.random()*1e9); const first=S.lobby.nextFirst||(RNG(seed).chance(0.5)?'host':'guest'); send('START',{seed, first, rematch:!!S.lobby.nextFirst}); beginBattle(seed, first, !!S.lobby.nextFirst); } }
+  async function beginBattle(seed, first, rematch){
+    S.game=Rules.startBattle(S.game, first); S.game.seed=seed; S.lobby.stage='battle'; S.viewAs=S.mode==='net'?S.role:(S.mode==='hotseat'?first:'host'); S.gameOverHandled=false; S.gameOverSent=false; S.myRematch=false; S.oppRematch=false; S.oppHistory=null; S.chatLog=[]; save();
+    const hn=S.game.players.host.navy||'us', gn=S.game.players.guest.navy||'uk';
+    if(!rematch){ overlay('ov-coin',true); $('#coin-text').textContent=''; await Anim.coinFlip($('#coinCanvas'), seed, first, hn, gn); overlay('ov-coin',false); }
+    else { toast('Rematch: '+S.game.players[first].name+' ('+navy(S.game.players[first].navy).name+') fires first.','',3000); }
+    enterBattle();
+  }
+
+  /* ---------- battle ---------- */
+  function battleOceans(){
+    if(!S.oceans.own){ S.oceans.own=Render.register(Render.createOcean($('#ownCanvas'),{kind:'own'})); S.oceans.enemy=Render.register(Render.createOcean($('#enemyCanvas'),{kind:'enemy'})); bindBattleCanvases(); }
+    return S.oceans;
+  }
+  function enterBattle(){
+    battleOceans(); showScreen('battle'); S.oceans.own.resize(); S.oceans.enemy.resize(); S.oceans.own.clearEffects(); S.oceans.enemy.clearEffects(); S.oceans.own.shipFx={}; S.oceans.enemy.shipFx={};
+    if(S.mode==='hotseat') S.viewAs=S.game.current; S.target=null; S.selShip=firstMobileShip();
+    renderLog(); refreshBattle(); setTab(S.game.phase==='fire'?'enemy':'own'); checkTurn();
+  }
+  function firstMobileShip(){ const f=S.game.players[me()].fleet||[]; const i=f.findIndex(s=>!s.sunk&&!s.crippled); return i<0?0:i; }
+  function refreshBattle(){
+    const g=S.game; const my=g.players[me()], op=g.players[them()]; const own=S.oceans.own, en=S.oceans.enemy;
+    own.fleet=my.fleet; own.navyId=my.navy||'us'; own.turn=g.turn; own.pegs=Rules.pegMap(op.shots); own.selected=(g.current===me()&&g.phase==='maneuver'&&!g.winner)?S.selShip:-1;
+    en.fleet=null; en.navyId=op.navy||'uk'; en.turn=g.turn; en.pegs=Rules.pegMap(my.shots); en.target=S.target;
+    $('#battle-code').textContent=S.room; $('#battle-turn').textContent='Turn '+g.turn; $('#battle-shots').textContent=my.shots.length+' shot'+(my.shots.length===1?'':'s');
+    $('#own-label').textContent=(S.mode==='hotseat'?my.name:'Your')+' ocean · '+navy(own.navyId).name; $('#enemy-label').textContent='Enemy waters · '+navy(en.navyId).name;
+    $('#own-badge').textContent=Rules.sunkCount(my.fleet||[])+'/5 lost'; const t=Rules.classTally(my.shots); $('#enemy-badge').textContent=Object.values(t).filter(x=>x.sunk).length+'/5 sunk';
+    renderDocks(); renderTally(t); renderActions(); renderConn(S.linkState,'');
+    const burning=(my.fleet||[]).some(s=>!s.sunk&&Rules.hitCount(s)>0)||AI.liveHits(my.shots).length>0; Sfx.fireLoop(burning && !g.winner);
+    document.documentElement.style.setProperty('--accent', navy(own.navyId).livery.accent==='#000000'?'#ffb347':'#ffb347');
+  }
+  function renderDocks(){
+    const g=S.game; const my=g.players[me()], op=g.players[them()];
+    const od=$('#ownDock'); od.innerHTML='';
+    (my.fleet||[]).forEach((s,i)=>{ const row=document.createElement('div'); const mob=Rules.mobility(s); row.className='dockship'+(S.selShip===i&&g.current===me()&&g.phase==='maneuver'?' selected':'')+(mob==='sunk'||mob==='crippled'?' disabled':''); const cv=document.createElement('canvas'); cv.width=200; cv.height=68; row.appendChild(cv);
+      const info=document.createElement('div'); info.innerHTML='<div class="dname">'+shipLabel(me(),s.cls)+'</div><div class="dcls">'+SHIP_CLASSES[s.cls].name+' · bow '+cellName(s.bow)+' '+s.heading+'</div>'; const secs=document.createElement('div'); secs.className='secs'; s.hits.forEach((h,k)=>{ const b=document.createElement('span'); b.className='sec'+(h?' hit':'')+(k===0?' bow':''); b.title=SHIP_CLASSES[s.cls].sections[k]; secs.appendChild(b); }); info.appendChild(secs); row.appendChild(info);
+      const st=document.createElement('span'); st.className='mob '+mob; st.textContent={ok:'mobile',damaged:'damaged',crippled:'dead in water',sunk:'sunk'}[mob]; row.appendChild(st);
+      row.addEventListener('click',()=>{ if(g.current!==me()||g.phase!=='maneuver') return; S.selShip=i; $('#ship-select').value=String(i); Sfx.click(); refreshBattle(); });
+      od.appendChild(row); drawDockShip(cv,s.cls,my.navy||'us',s); });
+    const ed=$('#enemyDock'); ed.innerHTML=''; const tally=Rules.classTally(my.shots);
+    CLASS_ORDER.forEach(cls=>{ const t=tally[cls]; const row=document.createElement('div'); row.className='dockship'+(t.sunk?' disabled':''); const cv=document.createElement('canvas'); cv.width=200; cv.height=68; row.appendChild(cv);
+      const info=document.createElement('div'); info.innerHTML='<div class="dname">'+shipLabel(them(),cls)+'</div><div class="dcls">'+SHIP_CLASSES[cls].name+' · '+t.hits+'/'+t.total+' hits</div>'; const secs=document.createElement('div'); secs.className='secs'; for(let k=0;k<t.total;k++){ const b=document.createElement('span'); b.className='sec'+(k<t.hits?' hit':''); secs.appendChild(b); } info.appendChild(secs); row.appendChild(info);
+      const st=document.createElement('span'); st.className='mob '+(t.sunk?'sunk':t.crippled?'crippled':t.hits?'damaged':'ok'); st.textContent=t.sunk?'sunk':t.crippled?'crippled':t.hits?'hit':'unknown'; row.appendChild(st); ed.appendChild(row);
+      const fake={hits:new Array(t.total).fill(false).map((_,k)=>k<t.hits), sunk:t.sunk, crippled:t.crippled||t.sunk}; drawDockShip(cv,cls,op.navy||'uk',fake,{mobility:t.sunk?'sunk':t.crippled?'crippled':t.hits?'damaged':'ok'}); });
+  }
+  function renderTally(t){ const el=$('#tally'); el.innerHTML=''; CLASS_ORDER.forEach(cls=>{ const d=document.createElement('div'); d.innerHTML='<b class="'+(t[cls].sunk?'done':'')+'">'+t[cls].hits+'/'+t[cls].total+'</b>'+SHIP_CLASSES[cls].icon+' '+SHIP_CLASSES[cls].name.split(' ')[0]; d.title=SHIP_CLASSES[cls].name+': hits landed / sections'; el.appendChild(d); }); }
+  function renderActions(){
+    const g=S.game; const my=g.players[me()]; const myTurn=g.current===me()&&!g.winner&&g.stage==='battle'; const man=myTurn&&g.phase==='maneuver'&&!S.busy; const fire=myTurn&&!S.busy&&!S.pendingFire;
+    const sel=$('#ship-select'); const cur=String(S.selShip); sel.innerHTML=''; (my.fleet||[]).forEach((s,i)=>{ const o=document.createElement('option'); o.value=String(i); const mob=Rules.mobility(s); o.textContent=SHIP_CLASSES[s.cls].name+(mob==='ok'?'':' ('+mob+')'); o.disabled=mob==='sunk'||mob==='crippled'; sel.appendChild(o); }); sel.value=cur; sel.disabled=!man;
+    const ship=(my.fleet||[])[S.selShip];
+    ['advance','reverse','rotcw','rotccw'].forEach(t=>{ const b=$('#btn-'+t); b.disabled=!man||!ship||!Rules.canMove(my.fleet,S.selShip,t).ok; if(ship&&man){ const r=Rules.canMove(my.fleet,S.selShip,t); b.title=r.ok?'':r.reason; } });
+    $('#btn-skip').disabled=!man;
+    $('#btn-fire').disabled=!(fire&&S.target); $('#target-label').textContent=S.target?'Target '+cellName(S.target):(myTurn?(g.phase==='fire'?'Tap an enemy cell':'Maneuver, or tap an enemy cell'):'Waiting…');
+    $('#phase-label').textContent=g.winner?'Battle over':!myTurn?'Enemy turn — '+(S.pendingFire?'shot in the air…':'waiting'):g.phase==='maneuver'?'Your turn · Maneuver phase (optional), then fire':'Your turn · Fire phase';
+    $('#btn-surrender').disabled=!!g.winner;
+  }
+  function renderLog(){
+    const box=$('#log'); box.innerHTML=''; const g=S.game; const chats=S.chatLog.slice(); let ci=0;
+    g.log.forEach((e,idx)=>{ while(ci<chats.length&&chats[ci].n<=idx){ appendLog('sys chat','['+chats[ci].navy+'] '+chats[ci].text); ci++; }
+      const mine=e.player===me(); const who=mine?'You':g.players[e.player].name;
+      if(e.kind==='shot') appendLog(mine?'me':'them', who+' fired at '+cellName(e.cell)+': '+Rules.resultText(e), e.turn);
+      else if(e.kind==='move' && (mine||g.stage==='over'||S.mode==='hotseat')) appendLog(mine?'me':'them', who+' '+({advance:'advanced',reverse:'reversed',rotcw:'rotated ↻',rotccw:'rotated ↺'}[e.type])+' '+SHIP_CLASSES[e.cls].name+(mine?' to '+cellName(e.to.bow)+' '+e.to.heading:'')+(e.type.startsWith('rot')?' — turn ends':''), e.turn); });
+    while(ci<chats.length){ appendLog('sys chat','['+chats[ci].navy+'] '+chats[ci].text); ci++; }
+  }
+  function setTab(t){ S.tab=t; $('#tab-own').classList.toggle('active',t==='own'); $('#tab-enemy').classList.toggle('active',t==='enemy'); $('#side-own').classList.toggle('inactive',t!=='own'); $('#side-enemy').classList.toggle('inactive',t!=='enemy'); S.oceans.own.resize(); S.oceans.enemy.resize(); }
+  function bindBattleCanvases(){
+    const en=S.oceans.enemy, own=S.oceans.own; const tip=$('#peg-tip'); let pressTimer=0;
+    const showTip=(cell, x, y)=>{ const e=en.pegs&&en.pegs.get(cellKey(cell)); if(!e||!e.history.length){ tip.style.display='none'; return; } tip.innerHTML='<b>'+cellName(cell)+'</b><br>'+e.history.map(s=>'Turn '+s.turn+': '+Rules.resultText(s)).join('<br>')+(e.stale?'<br><i>stale — ship has since moved</i>':''); tip.style.display='block'; tip.style.left=Math.min(window.innerWidth-250,x+12)+'px'; tip.style.top=(y+12)+'px'; };
+    en.canvas.addEventListener('pointermove',e=>{ const cell=en.cellAt(e.clientX,e.clientY); en.hover=cell; if(e.pointerType==='mouse'){ if(cell) showTip(cell,e.clientX,e.clientY); else tip.style.display='none'; } });
+    en.canvas.addEventListener('pointerleave',()=>{ en.hover=null; tip.style.display='none'; });
+    en.canvas.addEventListener('pointerdown',e=>{ Sfx.unlock(); const cell=en.cellAt(e.clientX,e.clientY); if(!cell) return; clearTimeout(pressTimer); if(e.pointerType!=='mouse'){ pressTimer=setTimeout(()=>{ showTip(cell,e.clientX,e.clientY); pressTimer=0; },450); } });
+    en.canvas.addEventListener('pointerup',e=>{ const cell=en.cellAt(e.clientX,e.clientY); if(pressTimer){ clearTimeout(pressTimer); pressTimer=0; if(cell) selectTarget(cell); } else if(e.pointerType==='mouse' && cell) selectTarget(cell); else if(e.pointerType!=='mouse'){ setTimeout(()=>{ tip.style.display='none'; },1200); } });
+    en.canvas.addEventListener('pointercancel',()=>{ clearTimeout(pressTimer); pressTimer=0; });
+    own.canvas.addEventListener('pointermove',e=>{ own.hover=own.cellAt(e.clientX,e.clientY); });
+    own.canvas.addEventListener('pointerleave',()=>{ own.hover=null; });
+    own.canvas.addEventListener('pointerdown',e=>{ Sfx.unlock(); if(Anim.busy()){ Anim.skip(); return; } const cell=own.cellAt(e.clientX,e.clientY); if(!cell) return; const g=S.game; if(g.current!==me()||g.phase!=='maneuver') return; const f=g.players[me()].fleet; for(let i=0;i<f.length;i++){ if(Rules.sectionAt(f[i],cell)>=0){ S.selShip=i; Sfx.click(); refreshBattle(); return; } } });
+    // tap anywhere on the enemy canvas during an animation skips it
+    en.canvas.addEventListener('pointerdown',()=>{ if(Anim.busy()) Anim.skip(); });
+  }
+  function selectTarget(cell){ const g=S.game; if(g.current!==me()||g.winner||S.busy||S.pendingFire) return; S.target=cell; S.oceans.enemy.target=cell; Sfx.click(); renderActions(); }
+  function bindBattle(){
+    $('#tab-own').addEventListener('click',()=>setTab('own')); $('#tab-enemy').addEventListener('click',()=>setTab('enemy'));
+    $('#ship-select').addEventListener('change',e=>{ S.selShip=parseInt(e.target.value,10)||0; refreshBattle(); });
+    ['advance','reverse','rotcw','rotccw'].forEach(t=>$('#btn-'+t).addEventListener('click',()=>doManeuver(t)));
+    $('#btn-skip').addEventListener('click',()=>{ Sfx.unlock(); const r=Rules.skipManeuver(S.game,me()); if(!r.ok){ toast(r.reason,'err'); return; } S.game=r.game; Sfx.click(); save(); refreshBattle(); if(isMobile()) setTab('enemy'); });
+    $('#btn-fire').addEventListener('click',()=>{ if(S.target) doFire(S.target); });
+    $('#btn-copy2').addEventListener('click',copyLink); $('#btn-share2').addEventListener('click',shareLink);
+    $('#btn-surrender').addEventListener('click',async()=>{ Sfx.unlock(); if(S.game.winner) return; if(await confirmDialog('Surrender','Strike your colours and concede this battle?','Surrender')){ S.game=Rules.surrender(S.game, me()); save(); if(S.mode==='net'){ sendGameOver('surrender'); } onGameOver(); } });
+    document.addEventListener('keydown',e=>{ if(S.screen!=='battle') return; if(e.key==='Escape'&&Anim.busy()) Anim.skip(); if(e.key==='Enter'&&S.target&&!$('#btn-fire').disabled) doFire(S.target); });
+    $('#banner').addEventListener('click',()=>{ if(Anim.busy()) Anim.skip(); });
+  }
+  async function doManeuver(type){
+    Sfx.unlock(); const g=S.game; if(S.busy) return; const pid=me(); const idx=S.selShip; const fleet=g.players[pid].fleet;
+    const can=Rules.canMove(fleet, idx, type);
+    if(!can.ok){ S.busy=true; await Anim.run(()=>Anim.playIllegal(S.oceans.own, idx, can.reason)); S.busy=false; toast(can.reason,'err',1800); renderActions(); return; }
+    const r=Rules.maneuver(g, pid, idx, type); if(!r.ok){ toast(r.reason,'err'); Sfx.buzz(); return; }
+    const from=fleet[idx]; S.busy=true; renderActions();
+    // animate on the pre-move fleet, then commit
+    await Anim.run(()=>Anim.playManeuver(S.oceans.own, idx, type, from, r.ship));
+    S.game=r.game; S.busy=false; save();
+    appendLog('me','You '+({advance:'advanced',reverse:'reversed',rotcw:'rotated ↻',rotccw:'rotated ↺'}[type])+' '+SHIP_CLASSES[from.cls].name+' to '+cellName(r.ship.bow)+' '+r.ship.heading+(r.ended?' — turn ends':''), g.turn);
+    if(r.ended){ if(S.mode==='net') send('END_TURN',{}); afterAction(); }
+    else { refreshBattle(); if(isMobile()) setTab('enemy'); toast('Maneuver complete. Choose a target and fire.','',1800); }
+  }
+  async function doFire(cell){
+    Sfx.unlock(); const g=S.game; if(S.busy||S.pendingFire) return; const pid=me();
+    if(g.current!==pid||g.winner){ return; }
+    if(S.mode==='net'){ S.pendingFire={x:cell.x,y:cell.y}; send('FIRE',{cell:S.pendingFire, turn:g.turn}); S.target=null; renderActions(); toast('Shot away — waiting for the enemy report…','',1500); return; }
+    const r=Rules.fire(g, pid, cell); if(!r.ok){ toast(r.reason,'err'); Sfx.buzz(); return; }
+    S.target=null; S.busy=true; renderActions();
+    const struck=r.res&&r.res.shipIdx>=0?g.players[them()].fleet[r.res.shipIdx]:null;
+    await Anim.run(()=>Anim.playShot(S.oceans.enemy,{cell, shot:r.shot, owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')}));
+    S.game=r.game; S.busy=false; S.oceans.enemy.target=null; announceShot(r.shot, true); save(); afterAction(); void struck;
+  }
+  function announceShot(shot, mine){
+    const g=S.game; const attacker=mine?me():them(); const defender=Rules.other(attacker); const an=g.players[attacker].navy||'us', dn=g.players[defender].navy||'uk';
+    const cn=shot.cls?SHIP_CLASSES[shot.cls].name:''; const shipName=shot.cls?shipLabel(defender,shot.cls):'';
+    appendLog(mine?'me':'them',(mine?'You':g.players[attacker].name)+' fired at '+cellName(shot.cell)+': '+Rules.resultText(shot), shot.turn);
+    if(shot.result===RESULT.MISS){ toast('Miss','miss',1600); chat(an,'miss'); }
+    else if(shot.result===RESULT.HIT){ toast('Hit: '+cn+'!'+(shot.crippled?' Crippled: dead in the water':''),'hit',2400); chat(an, shot.crippled?'hitCrippled':'hit', {cls:cn, ship:shipName}); }
+    else if(shot.result===RESULT.CONFIRMED){ toast('Confirmed: '+cn+' still here','hit',2000); chat(an,'confirmed',{cls:cn, ship:shipName}); }
+    else if(shot.result===RESULT.SUNK){ toast('Sunk: '+cn+'!','sunk',3000); chat(an,'sunkEnemy',{cls:cn, ship:shipName}); if(!S.game.winner||true) chat(dn,'sunkOwn',{cls:cn, ship:shipName}); }
+  }
+  function afterAction(){ save(); if(S.screen!=='battle') return; refreshBattle(); checkTurn(); }
+  async function checkTurn(){
+    const g=S.game; if(g.winner){ onGameOver(); return; }
+    if(S.mode==='ai'){ if(g.current==='guest'){ banner('Enemy fleet is maneuvering', true); setTimeout(aiTurn, 900*Anim.scale()+200); } else myTurnBanner(); return; }
+    if(S.mode==='hotseat'){ if(g.current!==S.viewAs){ hideBanner(); await curtain('Pass the device to '+g.players[g.current].name, 'Turn '+g.turn+'. Both oceans are hidden until the next admiral is ready.'); S.viewAs=g.current; S.target=null; S.selShip=firstMobileShip(); S.oceans.own.clearEffects(); S.oceans.enemy.clearEffects(); renderLog(); refreshBattle(); setTab('own'); } myTurnBanner(); return; }
+    if(g.current===me()){ if(S.pendingFire){ S.pendingFire=null; } myTurnBanner(); } else banner('Enemy fleet is maneuvering', true);
+  }
+  function myTurnBanner(){ banner('Your turn, Admiral', false, 1800); Sfx.chime(); chat(S.game.players[me()].navy||'us','turnStart'); if(isMobile()) setTab('own'); }
+  async function aiTurn(){
+    const g=S.game; if(g.winner||g.current!=='guest') return;
+    const t=AI.takeTurn(g,'guest',S.rng); S.busy=true;
+    if(t.rotated){ S.game=t.game; appendLog('them','Enemy fleet maneuvered — no shot this turn.', g.turn); S.busy=false; hideBanner(); afterAction(); return; }
+    if(!t.shot){ S.game=t.game; S.busy=false; hideBanner(); afterAction(); return; }
+    const shot=t.shot; const struck=shot.shipIdx>=0?g.players.host.fleet[shot.shipIdx]:null; hideBanner();
+    // keep the pre-shot fleet on screen during the animation, then commit
+    await Anim.run(()=>Anim.playShot(S.oceans.own,{cell:shot.cell, shot, owner:true, ship:struck, shipIdx:shot.shipIdx, navyId:g.players.host.navy, shakeEl:$('#side-own')}));
+    S.game=t.game; S.busy=false; announceShot(shot,false); save(); afterAction();
+  }
+  async function onRemoteFire(p){
+    const g=S.game; const cell=p.cell; if(!cell||g.stage!=='battle'||g.current!==them()){ console.warn('FIRE out of turn', p); return; }
+    const r=Rules.fire(g, them(), cell); if(!r.ok){ console.warn('FIRE refused', r.reason); return; }
+    const shot=r.shot; send('RESULT',{cell:shot.cell, result:shot.result, cls:shot.cls, crippled:shot.crippled, crippledBy:shot.crippledBy, footprint:shot.footprint, turn:shot.turn});
+    const struck=shot.shipIdx>=0?g.players[me()].fleet[shot.shipIdx]:null; S.busy=true; hideBanner(); renderActions(); if(isMobile()) setTab('own');
+    await Anim.run(()=>Anim.playShot(S.oceans.own,{cell, shot, owner:true, ship:struck, shipIdx:shot.shipIdx, navyId:g.players[me()].navy, shakeEl:$('#side-own')}));
+    S.game=r.game; S.busy=false; announceShot(shot,false); save(); afterAction();
+  }
+  async function onRemoteResult(p){
+    const g=S.game; if(!S.pendingFire||!p.cell||p.cell.x!==S.pendingFire.x||p.cell.y!==S.pendingFire.y){ console.warn('unexpected RESULT', p); if(!S.pendingFire) return; }
+    const cell=S.pendingFire; const r=Rules.fire(g, me(), cell, {result:p.result, cls:p.cls, crippled:!!p.crippled, crippledBy:p.crippledBy||null, footprint:p.footprint||null}); if(!r.ok){ console.warn('RESULT refused', r.reason); S.pendingFire=null; return; }
+    S.busy=true; renderActions(); if(isMobile()) setTab('enemy');
+    await Anim.run(()=>Anim.playShot(S.oceans.enemy,{cell, shot:r.shot, owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')}));
+    S.game=r.game; S.pendingFire=null; S.busy=false; S.oceans.enemy.target=null; announceShot(r.shot,true); save(); afterAction();
+  }
+
+  /* ---------- game over, cinematic, stats, replay, rematch ---------- */
+  function myHistory(){ const p=S.game.players[me()]; return {initialFleet:p.initialFleet, moves:p.moves, fleet:p.fleet}; }
+  function sendGameOver(reason){ if(S.gameOverSent) return; S.gameOverSent=true; send('GAME_OVER',{winner:S.game.winner, reason:reason||S.game.endReason, history:myHistory()}); }
+  function onRemoteGameOver(p){
+    const g=S.game; const t=them();
+    if(!g.winner){ if(p.reason==='surrender'){ S.game=Rules.surrender(g, t); } else if(p.winner){ S.game.winner=p.winner; S.game.stage='over'; S.game.endReason='fleet'; } }
+    if(p.history){ S.oppHistory=p.history; mergeOppHistory(); }
+    save(); if(!S.gameOverHandled) onGameOver(); else { $('#over-status').textContent='Opponent history received — replay available.'; $('#btn-replay').disabled=false; }
+  }
+  function mergeOppHistory(){
+    const h=S.oppHistory; if(!h) return; const g=S.game; const t=them(); const p=g.players[t];
+    p.initialFleet=h.initialFleet||p.initialFleet; p.moves=h.moves||[]; if(h.fleet) p.fleet=h.fleet;
+    const existing=new Set(g.log.filter(e=>e.kind==='move'&&e.player===t).map(e=>e.turn+':'+e.ship+':'+e.type));
+    (p.moves||[]).forEach(m=>{ if(!existing.has(m.turn+':'+m.ship+':'+m.type)) g.log.push(Object.assign({},m,{player:t,kind:'move'})); });
+    g.log.sort((a,b)=>a.turn-b.turn||(a.kind==='move'?0:1)-(b.kind==='move'?0:1)); g.log.forEach((e,i)=>e.n=i);
+  }
+  async function onGameOver(){
+    if(S.gameOverHandled) return; S.gameOverHandled=true; const g=S.game; hideBanner(); S.busy=false; S.pendingFire=null; Sfx.fireLoop(false);
+    if(S.mode==='net') sendGameOver(); save(); refreshBattle();
+    const won=g.winner===me(); const myN=g.players[me()].navy||'us', opN=g.players[them()].navy||'uk';
+    const lines=navy(won?myN:myN).chatter[won?'victory':'defeat']; const line=lines[Math.floor(Math.random()*lines.length)];
+    appendLog('sys', (won?'VICTORY — ':'DEFEAT — ')+(g.endReason==='surrender'?(won?'the enemy struck their colours.':'you struck your colours.'):'the fifth ship has gone down.'));
+    if(S.mode==='hotseat'){ // both players are here; show the winner's cinematic
+      const w=g.winner; await Cine.play({kind:'victory', me:{navyId:g.players[w].navy, fleet:g.players[w].fleet}, them:{navyId:g.players[Rules.other(w)].navy, fleet:g.players[Rules.other(w)].fleet}, line:navy(g.players[w].navy).chatter.victory[0]});
+    } else {
+      await Cine.play({kind:won?'victory':'defeat', me:{navyId:myN, fleet:g.players[me()].fleet}, them:{navyId:opN, fleet:g.players[them()].fleet||revealedEnemyFleet()}, line});
+    }
+    Sfx.speak(line, myN); showOver();
+  }
+  function revealedEnemyFleet(){ // from sunk footprints (what we legitimately know)
+    const my=S.game.players[me()]; const out=[]; my.shots.filter(s=>s.result===RESULT.SUNK&&s.footprint).forEach(s=>{ const fp=s.footprint; const d={x:fp[0].x-fp[1].x,y:fp[0].y-fp[1].y}; const heading=d.x===1?'E':d.x===-1?'W':d.y===-1?'N':'S'; out.push({cls:s.cls,bow:fp[0],heading,hits:fp.map(()=>true),sunk:true,crippled:true}); });
+    CLASS_ORDER.forEach(c=>{ if(!out.find(s=>s.cls===c)) out.push({cls:c,bow:null,heading:'N',hits:new Array(SHIP_CLASSES[c].size).fill(false),sunk:false,crippled:false}); });
+    return out;
+  }
+  function showOver(){
+    const g=S.game; const pid=S.mode==='hotseat'?g.winner:me(); const won=g.winner===pid; const st=Rules.computeStats(g,pid); const opSt=Rules.computeStats(g,Rules.other(pid));
+    showScreen('over'); const title=$('#over-title'); title.textContent=S.mode==='hotseat'?(g.players[g.winner].name+' wins'):(won?'VICTORY':'DEFEAT'); title.className=won?'victory':'defeat';
+    $('#over-sub').textContent=(g.endReason==='surrender'?'By surrender. ':'')+g.players[g.winner].name+' ('+navy(g.players[g.winner].navy).name+') defeats '+g.players[Rules.other(g.winner)].name+' ('+navy(g.players[Rules.other(g.winner)].navy).name+') after '+g.turn+' turns.';
+    const box=$('#over-stats'); box.innerHTML='';
+    const row=(k,v)=>{ const d=document.createElement('div'); d.innerHTML='<span>'+k+'</span><b>'+v+'</b>'; box.appendChild(d); };
+    const hb=CLASS_ORDER.map(c=>SHIP_CLASSES[c].icon+':'+st.hitsByClass[c]).join(' ');
+    row('Turns played', g.turn); row('Shots fired', st.shots); row('Accuracy', Math.round(st.accuracy*100)+'%'); row('Hits by class', hb);
+    row('Enemy crippled by stern shot', st.sternCripples); row('Advances / reverses / rotations', st.advances+' / '+st.reverses+' / '+st.rotations);
+    row('Longest chase', st.longestChase?st.longestChase+' turns ('+SHIP_CLASSES[st.longestChaseCls].name+')':'—');
+    row('MVP ship', st.mvp&&st.mvp.dmgTurns>=0?shipLabel(pid,st.mvp.cls)+' ('+st.mvp.dmgTurns+' turns damaged, '+st.mvp.absorbed+' shots absorbed)':(st.mvp?shipLabel(pid,st.mvp.cls)+' (untouched)':'—'));
+    row('Ships lost / sunk', st.shipsLost+' / '+st.shipsSunk); row('Enemy accuracy', Math.round(opSt.accuracy*100)+'%');
+    const canReplay=!!(g.players.host.initialFleet&&g.players.guest.initialFleet); $('#btn-replay').disabled=!canReplay; $('#over-status').textContent=canReplay?'':'Waiting for the opponent\'s move history for the replay…';
+    $('#btn-rematch').disabled=false;
+  }
+  function bindOver(){
+    $('#btn-cine-skip').addEventListener('click',()=>Cine.skip()); $('#cineCanvas').addEventListener('pointerdown',()=>Cine.skip());
+    $('#btn-replay').addEventListener('click',()=>{ Sfx.unlock(); showScreen('replay'); Replay.open(S.game); });
+    $('#btn-replay-back').addEventListener('click',()=>{ Replay.close(); showScreen('over'); });
+    $('#btn-over-home').addEventListener('click',async()=>{ if(await confirmDialog('Leave','Leave this room? The finished battle will be forgotten.','Leave')) leaveToHome(); });
+    $('#btn-rematch').addEventListener('click',()=>{ Sfx.unlock(); Sfx.confirm(); S.myRematch=true; $('#btn-rematch').disabled=true; if(S.mode==='net'){ send('REMATCH',{}); $('#over-status').textContent='Rematch requested — waiting for the opponent…'; maybeRematch(); } else startRematch(); });
+  }
+  function maybeRematch(){ if(S.mode!=='net'||!(S.myRematch&&S.oppRematch)) return; if(S.role==='host') startRematch(); }
+  function startRematch(){
+    const loser=Rules.other(S.game.winner); S.lobby.nextFirst=loser; S.lobby.rematch=true; S.lobby.hostReady=false; S.lobby.guestReady=false;
+    resetToLobby(false); if(S.mode==='net') sendLobby(); toast('Rematch: '+S.game.players[loser].name+' fires first. Navies may be re-picked.','',3500);
+  }
+
+  /* ---------- tests screen ---------- */
+  function runTestsScreen(){
+    showScreen('test'); const results=Tests.run(); const body=$('#test-body'); body.innerHTML=''; let fails=0;
+    results.forEach(r=>{ if(!r.pass) fails++; const tr=document.createElement('tr'); tr.className=r.pass?'pass':'fail'; tr.innerHTML='<td>'+(r.pass?'PASS':'FAIL')+'</td><td>'+r.name+'</td><td>'+(r.pass?'':r.msg)+'</td>'; body.appendChild(tr); });
+    $('#test-summary').textContent=results.length+' cases, '+(results.length-fails)+' passed, '+fails+' failed.';
+    console.table(results.map(r=>({result:r.pass?'PASS':'FAIL', name:r.name, detail:r.pass?'':r.msg}))); console.log('UNDERWAY self-tests: '+(results.length-fails)+'/'+results.length+' passed');
+    return results;
+  }
+
+  /* ---------- boot ---------- */
+  function boot(){
+    loadSettings(); bindSettings(); bindHome(); bindLobby(); bindPlacement(); bindBattle(); bindOver(); Replay.bind();
+    window.addEventListener('resize',()=>{ Object.values(S.oceans).forEach(o=>o&&o.resize()); });
+    document.addEventListener('visibilitychange',()=>{ if(!document.hidden && S.link && S.link.peer && S.link.peer.disconnected){ try{ S.link.peer.reconnect(); }catch(e){} } });
+    window.addEventListener('beforeunload',()=>save());
+    const params=new URLSearchParams(location.search);
+    if(params.get('test')==='1'){ runTestsScreen(); return; }
+    const room=(params.get('room')||'').toUpperCase();
+    if(room){ const saved=Store.load(room); if(saved){ showScreen('home'); renderHome(); offerResume(saved); } else { S.aiLevel='hunter'; $('#home-name').value=S.settings.name||''; if(!S.settings.name){ showScreen('home'); renderHome(); $('#join-panel').classList.remove('hidden'); $('#join-code').value=room; toast('Enter your name, then Join to enter room '+room,'',4000); } else startNet('guest', room); } return; }
+    showScreen('home'); renderHome();
+  }
+  return { boot, S, showScreen, toast, runTestsScreen, save, restore };
+})();
+
+/* ============================================================
    SECTION 11 — END-GAME CINEMATIC (Canvas, ~20 s, skippable)
    ============================================================ */
 const Cine = (function(){
