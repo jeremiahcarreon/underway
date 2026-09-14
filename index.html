@@ -2075,7 +2075,7 @@ const UI = (function(){
       status:(st,detail)=>{ S.linkState=st; renderConn(st,detail); if(st==='online'&&S.role==='host'){ S.lobby.guestOnline=true; } if(st!=='online'&&S.role==='host'){ S.lobby.guestOnline=false; } if(S.screen==='lobby') renderLobby(); },
       open:()=>{ sendHello(); S.chan.send('RESYNC_REQUEST',{lastSeqIn:S.chan.lastSeqIn}); S.chan.resendFrom(S.chan.lastAckIn); if(S.role==='host') sendLobby(); },
       data:env=>{ S.chan.receive(env); },
-      roomFull:()=>{ showError('Room full','That room already has two players. Ask for a new room code.', false); },
+      roomFull:()=>{ showError('Room full','That room already has two players. If one of them is your own earlier session, wait a moment and retry; otherwise ask for a new room code.', true); },
       fatal:msg=>{ showError('Connection problem', msg, true); },
       signalError:msg=>{ renderConn('reconnecting', msg); },
     }});
@@ -2373,9 +2373,8 @@ const UI = (function(){
     if(S.mode==='net'){ S.pendingFire={x:cell.x,y:cell.y}; send('FIRE',{cell:S.pendingFire, turn:g.turn}); S.target=null; renderActions(); toast('Shot away — waiting for the enemy report…','',1500); return; }
     const r=Rules.fire(g, pid, cell); if(!r.ok){ toast(r.reason,'err'); Sfx.buzz(); return; }
     S.target=null; S.busy=true; renderActions();
-    const struck=r.res&&r.res.shipIdx>=0?g.players[them()].fleet[r.res.shipIdx]:null;
     await Anim.run(()=>Anim.playShot(S.oceans.enemy,{cell, shot:r.shot, owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')}));
-    S.game=r.game; S.busy=false; S.oceans.enemy.target=null; announceShot(r.shot, true); save(); afterAction(); void struck;
+    S.game=r.game; S.busy=false; S.oceans.enemy.target=null; announceShot(r.shot, true); save(); afterAction();
   }
   function announceShot(shot, mine){
     const g=S.game; const attacker=mine?me():them(); const defender=Rules.other(attacker); const an=g.players[attacker].navy||'us', dn=g.players[defender].navy||'uk';
@@ -2384,7 +2383,7 @@ const UI = (function(){
     if(shot.result===RESULT.MISS){ toast('Miss','miss',1600); chat(an,'miss'); }
     else if(shot.result===RESULT.HIT){ toast('Hit: '+cn+'!'+(shot.crippled?' Crippled: dead in the water':''),'hit',2400); chat(an, shot.crippled?'hitCrippled':'hit', {cls:cn, ship:shipName}); }
     else if(shot.result===RESULT.CONFIRMED){ toast('Confirmed: '+cn+' still here','hit',2000); chat(an,'confirmed',{cls:cn, ship:shipName}); }
-    else if(shot.result===RESULT.SUNK){ toast('Sunk: '+cn+'!','sunk',3000); chat(an,'sunkEnemy',{cls:cn, ship:shipName}); if(!S.game.winner||true) chat(dn,'sunkOwn',{cls:cn, ship:shipName}); }
+    else if(shot.result===RESULT.SUNK){ toast('Sunk: '+cn+'!','sunk',3000); chat(an,'sunkEnemy',{cls:cn, ship:shipName}); chat(dn,'sunkOwn',{cls:cn, ship:shipName}); }
   }
   function afterAction(){ save(); if(S.screen!=='battle') return; refreshBattle(); checkTurn(); }
   async function checkTurn(){
@@ -2440,7 +2439,7 @@ const UI = (function(){
     if(S.gameOverHandled) return; S.gameOverHandled=true; const g=S.game; hideBanner(); S.busy=false; S.pendingFire=null; Sfx.fireLoop(false);
     if(S.mode==='net') sendGameOver(); save(); refreshBattle();
     const won=g.winner===me(); const myN=g.players[me()].navy||'us', opN=g.players[them()].navy||'uk';
-    const lines=navy(won?myN:myN).chatter[won?'victory':'defeat']; const line=lines[Math.floor(Math.random()*lines.length)];
+    const lines=navy(myN).chatter[won?'victory':'defeat']; const line=lines[Math.floor(Math.random()*lines.length)];
     appendLog('sys', (won?'VICTORY — ':'DEFEAT — ')+(g.endReason==='surrender'?(won?'the enemy struck their colours.':'you struck your colours.'):'the fifth ship has gone down.'));
     if(S.mode==='hotseat'){ // both players are here; show the winner's cinematic
       const w=g.winner; await Cine.play({kind:'victory', me:{navyId:g.players[w].navy, fleet:g.players[w].fleet}, them:{navyId:g.players[Rules.other(w)].navy, fleet:g.players[Rules.other(w)].fleet}, line:navy(g.players[w].navy).chatter.victory[0]});
@@ -2503,7 +2502,7 @@ const UI = (function(){
     if(room){ const saved=Store.load(room); if(saved){ showScreen('home'); renderHome(); offerResume(saved); } else { S.aiLevel='hunter'; $('#home-name').value=S.settings.name||''; if(!S.settings.name){ showScreen('home'); renderHome(); $('#join-panel').classList.remove('hidden'); $('#join-code').value=room; toast('Enter your name, then Join to enter room '+room,'',4000); } else startNet('guest', room); } return; }
     showScreen('home'); renderHome();
   }
-  return { boot, S, showScreen, toast, runTestsScreen, save, restore };
+  return { boot, S, showScreen, toast, runTestsScreen, save, restore, startNet, startSolo };
 })();
 
 /* ============================================================
