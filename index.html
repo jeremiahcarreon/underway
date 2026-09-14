@@ -202,3 +202,291 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
 </style>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
+<body>
+
+<!-- ================= HOME ================= -->
+<section id="screen-home" class="screen active">
+  <div class="center">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 120 120" aria-hidden="true">
+        <defs><linearGradient id="lgsea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a6da8"/><stop offset="1" stop-color="#0b2b46"/></linearGradient></defs>
+        <circle cx="60" cy="60" r="56" fill="url(#lgsea)" stroke="#9fc4e0" stroke-width="2"/>
+        <path d="M18 78 Q30 70 42 78 T66 78 T90 78 T114 78" fill="none" stroke="#cfe3f5" stroke-width="3" opacity=".8"/>
+        <path d="M14 90 Q26 82 38 90 T62 90 T86 90 T110 90" fill="none" stroke="#cfe3f5" stroke-width="2" opacity=".5"/>
+        <path d="M30 70 L90 70 L98 60 L24 60 Z" fill="#6b7b8c"/>
+        <rect x="48" y="44" width="22" height="16" fill="#8a97a6"/>
+        <rect x="56" y="34" width="6" height="12" fill="#5a6570"/>
+        <rect x="34" y="52" width="10" height="8" fill="#5a6570"/>
+        <rect x="76" y="52" width="10" height="8" fill="#5a6570"/>
+        <path d="M60 26 L60 34" stroke="#ddd" stroke-width="2"/>
+        <path d="M60 26 L72 28 L60 31 Z" fill="#ffb347"/>
+      </svg>
+      <h1>UNDERWAY</h1>
+      <div class="tag">NAVAL COMBAT WHERE THE FLEETS MOVE</div>
+    </div>
+    <div class="card">
+      <div class="field"><label for="home-name">Your name, Admiral</label><input type="text" id="home-name" maxlength="18" placeholder="Admiral" autocomplete="off"></div>
+      <div class="grid2">
+        <button class="primary" id="btn-create">Create battle</button>
+        <button id="btn-join-toggle">Join battle</button>
+      </div>
+      <div id="join-panel" class="hidden" style="margin-top:8px">
+        <div class="row"><input type="text" id="join-code" maxlength="6" placeholder="ROOM CODE" style="text-transform:uppercase;font-family:var(--mono);letter-spacing:.2em"><button class="primary" id="btn-join">Join</button></div>
+      </div>
+      <div id="resume-panel" class="hidden" style="margin-top:8px">
+        <button id="btn-resume-last" style="width:100%">Resume last battle <span id="resume-last-code" class="roomcode" style="font-size:14px"></span></button>
+      </div>
+      <h3 style="margin-top:16px">Solo &amp; local</h3>
+      <div class="row" style="margin-bottom:8px">
+        <span class="sub">AI level</span>
+        <button class="small ailvl" data-level="random">Random</button>
+        <button class="small ailvl selected" data-level="hunter">Hunter</button>
+        <button class="small ailvl" data-level="admiral">Admiral</button>
+      </div>
+      <div class="grid2">
+        <button id="btn-ai">Versus AI</button>
+        <button id="btn-hotseat">Hotseat (pass &amp; play)</button>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <button class="small" id="btn-settings-home">Settings</button>
+        <button class="small" id="btn-howto">How to play</button>
+        <span class="spacer"></span>
+        <a class="sub" href="?test=1">Run self-tests</a>
+      </div>
+    </div>
+    <div class="footer">Ships move. Damage travels. Hit the stern. Build v1 · PeerJS is the only external dependency.</div>
+  </div>
+</section>
+
+<!-- ================= LOBBY ================= -->
+<section id="screen-lobby" class="screen">
+  <div class="center">
+    <div class="card">
+      <div class="row">
+        <div class="col" style="gap:2px">
+          <span class="sub">ROOM</span>
+          <span class="roomcode" id="lobby-code">------</span>
+        </div>
+        <button class="small" id="btn-copy">Copy link</button>
+        <button class="small" id="btn-share">Share</button>
+        <span class="spacer"></span>
+        <span class="conn offline" id="lobby-conn"><span class="dot"></span><span class="txt">offline</span></span>
+      </div>
+      <div class="sub" id="lobby-status" style="margin:8px 0">Waiting for an opponent to join…</div>
+      <div class="grid2" style="margin-bottom:12px">
+        <div class="playerbox" id="lobby-host"><span class="flagslot"></span><div><div class="pname">Host</div><div class="pnavy">—</div></div></div>
+        <div class="playerbox" id="lobby-guest"><span class="flagslot"></span><div><div class="pname">Guest</div><div class="pnavy">—</div></div></div>
+      </div>
+      <h3>Choose your navy</h3>
+      <div class="navygrid" id="navy-grid"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="small" id="btn-navy-random">Random navy</button>
+        <span class="spacer"></span>
+        <button id="btn-lobby-leave">Leave</button>
+        <button class="primary" id="btn-lobby-start">Confirm &amp; place fleets</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= PLACEMENT ================= -->
+<section id="screen-place" class="screen">
+  <div class="center" style="max-width:900px">
+    <div class="row" style="margin-bottom:6px">
+      <h2 id="place-title" style="margin:0">Place your fleet</h2>
+      <span class="spacer"></span>
+      <span class="conn offline" id="place-conn"><span class="dot"></span><span class="txt"></span></span>
+    </div>
+    <div class="battle" style="grid-template-columns:1fr 300px">
+      <div class="side">
+        <div class="ocean"><canvas id="placeCanvas" width="560" height="560"></canvas><span class="label" id="place-label">Your ocean</span></div>
+        <div class="placetools">
+          <button class="small" id="btn-random-fleet">Random fleet</button>
+          <button class="small tpl" data-tpl="perimeter">Perimeter</button>
+          <button class="small tpl" data-tpl="cluster">Cluster</button>
+          <button class="small tpl" data-tpl="spread">Spread</button>
+          <button class="small" id="btn-place-rotate">Cycle heading</button>
+          <button class="small" id="btn-place-clear">Clear</button>
+        </div>
+        <div class="hint" id="place-hint">Tap a ship in the dock, then tap a cell to place its bow. Tap the ship again to cycle its heading. Drag a placed ship to move it.</div>
+      </div>
+      <div class="side">
+        <h3>Fleet dock</h3>
+        <div class="dock" id="placeDock"></div>
+        <div class="row" style="margin-top:12px">
+          <button id="btn-place-back">Back</button>
+          <span class="spacer"></span>
+          <button class="primary" id="btn-ready">Ready</button>
+        </div>
+        <div class="sub" id="place-status" style="margin-top:8px"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= BATTLE ================= -->
+<section id="screen-battle" class="screen">
+  <div class="topbar">
+    <span class="roomcode" id="battle-code">------</span>
+    <button class="small icon" id="btn-copy2" title="Copy link">⧉</button>
+    <button class="small icon" id="btn-share2" title="Share">⇪</button>
+    <span class="conn offline" id="battle-conn"><span class="dot"></span><span class="txt"></span></span>
+    <span class="spacer"></span>
+    <span class="turn" id="battle-turn">Turn 1</span>
+    <span class="turn" id="battle-shots" title="Shots fired">0 shots</span>
+    <button class="small icon" id="btn-settings" title="Settings">⚙</button>
+    <button class="small danger" id="btn-surrender">Surrender</button>
+  </div>
+  <div class="tabs">
+    <button id="tab-own" class="active">Your ocean</button>
+    <button id="tab-enemy">Enemy waters</button>
+  </div>
+  <div class="battle">
+    <div class="side" id="side-own">
+      <div class="ocean"><canvas id="ownCanvas" width="560" height="560"></canvas><span class="label" id="own-label">Your ocean</span><span class="badge" id="own-badge"></span></div>
+      <div class="dock" id="ownDock"></div>
+    </div>
+    <div class="side inactive" id="side-enemy">
+      <div class="ocean"><canvas id="enemyCanvas" width="560" height="560"></canvas><span class="label" id="enemy-label">Enemy waters</span><span class="badge" id="enemy-badge"></span></div>
+      <div class="tally" id="tally"></div>
+      <div class="dock" id="enemyDock"></div>
+    </div>
+    <div class="logbox"><h3>Battle log</h3><div class="log" id="log"></div></div>
+  </div>
+  <div class="actions" id="actions">
+    <span class="phase" id="phase-label">Maneuver phase</span>
+    <select id="ship-select" aria-label="Ship to maneuver"></select>
+    <button id="btn-advance">Advance</button>
+    <button id="btn-reverse">Reverse</button>
+    <button id="btn-rotcw">Rotate ↻</button>
+    <button id="btn-rotccw">Rotate ↺</button>
+    <button id="btn-skip">Skip maneuver</button>
+    <span class="spacer"></span>
+    <span class="sub" id="target-label">No target</span>
+    <button class="fire" id="btn-fire" disabled>FIRE</button>
+  </div>
+</section>
+
+<!-- ================= GAME OVER / STATS ================= -->
+<section id="screen-over" class="screen">
+  <div class="resultcard card">
+    <h1 id="over-title">VICTORY</h1>
+    <div class="sub" id="over-sub" style="text-align:center;margin-bottom:12px"></div>
+    <div class="stats" id="over-stats"></div>
+    <div class="row" style="margin-top:14px">
+      <button id="btn-replay">Reveal replay</button>
+      <button class="primary" id="btn-rematch">Rematch</button>
+      <span class="spacer"></span>
+      <button id="btn-over-home">Home</button>
+    </div>
+    <div class="sub" id="over-status" style="margin-top:8px"></div>
+  </div>
+</section>
+
+<!-- ================= REPLAY ================= -->
+<section id="screen-replay" class="screen">
+  <div class="center" style="max-width:1100px">
+    <div class="row"><h2 style="margin:0">Reveal replay</h2><span class="spacer"></span><button class="small" id="btn-replay-back">Back to results</button></div>
+    <div class="replay" style="margin-top:8px">
+      <div class="ocean"><canvas id="replayA" width="560" height="560"></canvas><span class="label" id="replayA-label"></span></div>
+      <div class="ocean"><canvas id="replayB" width="560" height="560"></canvas><span class="label" id="replayB-label"></span></div>
+    </div>
+    <div class="replaybar">
+      <button class="small" id="rp-start">⏮</button>
+      <button class="small" id="rp-prev">◀</button>
+      <button class="small" id="rp-play">▶</button>
+      <button class="small" id="rp-next">▶|</button>
+      <input type="range" id="rp-scrub" min="0" max="0" value="0">
+      <span id="rp-pos" class="sub" style="min-width:70px;text-align:right">0 / 0</span>
+    </div>
+    <div class="replayinfo" id="rp-info"></div>
+  </div>
+</section>
+
+<!-- ================= TESTS ================= -->
+<section id="screen-test" class="screen">
+  <div class="center" style="max-width:900px">
+    <h2>UNDERWAY rules-engine self-tests</h2>
+    <div id="test-summary" class="sub" style="margin-bottom:8px"></div>
+    <table class="tests"><thead><tr><th>Result</th><th>Case</th><th>Detail</th></tr></thead><tbody id="test-body"></tbody></table>
+    <p><a href="./" style="color:var(--accent)">Back to game</a></p>
+  </div>
+</section>
+
+<!-- ================= OVERLAYS ================= -->
+<div id="cine"><canvas id="cineCanvas"></canvas><div class="cap" id="cine-cap"></div><button class="skip small" id="btn-cine-skip">Skip ▶</button></div>
+
+<div class="overlay" id="ov-settings"><div class="card settings">
+  <h2>Settings</h2>
+  <div class="field"><label>Master volume</label><input type="range" id="set-volume" min="0" max="100" value="70"></div>
+  <div class="field"><label>Mute</label><div class="switch" id="set-mute" role="switch"></div></div>
+  <div class="field"><label>Voice callouts (Web Speech)</label><div class="switch" id="set-voice" role="switch"></div></div>
+  <div class="field"><label>Fast animations</label><div class="switch" id="set-fast" role="switch"></div></div>
+  <div class="field"><label>Reduced motion</label><div class="switch" id="set-reduced" role="switch"></div></div>
+  <div class="field"><label>Ambient sea loop</label><div class="switch" id="set-ambient" role="switch"></div></div>
+  <div class="row" style="margin-top:12px"><span class="spacer"></span><button class="primary" id="btn-settings-close">Done</button></div>
+</div></div>
+
+<div class="overlay" id="ov-confirm"><div class="card">
+  <h2 id="confirm-title">Confirm</h2>
+  <p id="confirm-text"></p>
+  <div class="row"><span class="spacer"></span><button id="confirm-no">Cancel</button><button class="danger" id="confirm-yes">Confirm</button></div>
+</div></div>
+
+<div class="overlay" id="ov-resume"><div class="card">
+  <h2>Battle in progress</h2>
+  <p id="resume-text">A saved battle exists for this room.</p>
+  <div class="row"><span class="spacer"></span><button class="danger" id="resume-abandon">Abandon</button><button class="primary" id="resume-yes">Resume</button></div>
+</div></div>
+
+<div class="overlay" id="ov-coin"><div class="card" style="text-align:center">
+  <h2>Coin flip for first shot</h2>
+  <canvas class="coin" id="coinCanvas" width="320" height="320"></canvas>
+  <div id="coin-text" style="font-size:18px;font-weight:700;min-height:28px"></div>
+</div></div>
+
+<div class="overlay" id="ov-error"><div class="card">
+  <h2 id="error-title">Connection problem</h2>
+  <p id="error-text"></p>
+  <div class="row"><span class="spacer"></span><button id="error-home">Home</button><button class="primary" id="error-retry">Retry</button></div>
+</div></div>
+
+<div class="overlay" id="ov-howto"><div class="card">
+  <h2>How to play</h2>
+  <p style="font-size:14px;line-height:1.5">Each turn you may <b>maneuver one ship</b> (advance or reverse one cell along its heading, or rotate 90° about its stern — rotating ends your turn), then <b>fire one shot</b> at the enemy ocean.<br><br>
+  A <b>hit</b> reveals the ship class, never the section or heading. Firing on a section that is already burning reports <b>Confirmed: still here</b> — it costs a shot but proves the ship has not moved. A ship whose <b>stern</b> is hit is crippled instantly. Enough hits also cripple: Patrol 1, Destroyer 2, Submarine 2, Battleship 2, Carrier 3. Any damaged ship can no longer rotate. Damage travels with the ship. Sink all five to win.</p>
+  <div class="row"><span class="spacer"></span><button class="primary" id="howto-close">Got it</button></div>
+</div></div>
+
+<div class="curtain" id="curtain">
+  <h2 id="curtain-title">Pass the device</h2>
+  <p id="curtain-text" class="muted"></p>
+  <button class="primary" id="curtain-go">I'm ready</button>
+</div>
+
+<div class="banner" id="banner"><div><svg class="radar hidden" id="banner-radar" viewBox="0 0 56 56"><circle cx="28" cy="28" r="26" fill="none" stroke="#3fa9f5" stroke-width="1.5" opacity=".6"/><circle cx="28" cy="28" r="16" fill="none" stroke="#3fa9f5" stroke-width="1" opacity=".4"/><circle cx="28" cy="28" r="6" fill="none" stroke="#3fa9f5" stroke-width="1" opacity=".3"/><path id="radar-sweep" d="M28 28 L28 2 A26 26 0 0 1 50 14 Z" fill="#3fa9f5" opacity=".5"><animateTransform attributeName="transform" type="rotate" from="0 28 28" to="360 28 28" dur="2.2s" repeatCount="indefinite"/></path></svg><span id="banner-text"></span></div></div>
+<div class="toasts" id="toasts"></div>
+<div id="peg-tip"></div>
+
+<script>
+/* ============================================================
+   UNDERWAY — one namespaced object, everything inside an IIFE.
+   Sections (in order):
+     1. Constants, ship classes, navy data
+     2. Seeded RNG
+     3. Rules engine (pure)
+     4. AI
+     5. Net layer
+     6. Persistence
+     7. Audio synthesis
+     8. Renderer
+     9. Animation timeline
+    10. UI controllers
+    11. Cinematic
+    12. Replay
+    13. Self-tests
+   ============================================================ */
+'use strict';
+const Underway = (function(){
+
+/* ============================================================
