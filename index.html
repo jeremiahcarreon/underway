@@ -1062,3 +1062,144 @@ const Rules = (function(){
 })();
 
 /* ============================================================
+   SECTION 4 — AI (Random, Hunter, Admiral). Decisions from state + seeded RNG.
+   The AI plays as `pid`; it only reads its own fleet and its own shot history.
+   Memory lives in game.ai so it survives save/restore. takeTurn() clones the
+   game before touching memory, so callers keep the returned game.
+   ============================================================ */
+const AI = (function(){
+  const key = cellKey;
+  function initMemory(level){ return { level:level||'hunter', parity:0, chase:null, confirmedAnchors:{}, confirmChecks:0, movesMade:0, pursuits:0 }; }
+  function shotMap(shots){ const m=new Map(); shots.forEach(s=>m.set(key(s.cell), s)); return m; }
+  function neighbors(c){ return [{x:c.x+1,y:c.y},{x:c.x-1,y:c.y},{x:c.x,y:c.y+1},{x:c.x,y:c.y-1}].filter(Rules.inBounds); }
+
+  function placeFleet(rng){ return Rules.randomFleet(rng); }
+
+  function randomShot(shots, rng){
+    const taken=shotMap(shots); const free=[];
+    for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++){ if(!taken.has(x+','+y)) free.push({x,y}); }
+    if(!free.length) return {x:rng.int(SIZE),y:rng.int(SIZE)};
+    return rng.pick(free);
+  }
+  function huntShot(shots, mem, rng){
+    const taken=shotMap(shots); const free=[];
+    for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++){ if(!taken.has(x+','+y) && (x+y)%2===mem.parity) free.push({x,y}); }
+    if(!free.length) return randomShot(shots, rng);
+    return rng.pick(free);
+  }
+  // Latest HIT/CONFIRMED pegs (per cell) whose class has not been sunk.
+  function liveHits(shots){
+    const sunk=new Set(shots.filter(s=>s.result===RESULT.SUNK).map(s=>s.cls));
+    const latest=new Map(); shots.forEach(s=>latest.set(key(s.cell), s));
+    const out=[]; latest.forEach(s=>{ if((s.result===RESULT.HIT||s.result===RESULT.CONFIRMED) && s.cls && !sunk.has(s.cls)) out.push(s); });
+    return out;
+  }
+  function lineAxis(cells){ if(cells.length<2) return null; const xs=new Set(cells.map(c=>c.x)), ys=new Set(cells.map(c=>c.y)); return xs.size===1?'y':ys.size===1?'x':null; }
+  // Hunter: bracket both axes around live hits; extend along the line once two hits of one class align.
+  function hunterShot(shots, mem, rng){
+    const taken=shotMap(shots); const live=liveHits(shots);
+    if(live.length){
+      const byCls={}; live.forEach(s=>{ (byCls[s.cls]=byCls[s.cls]||[]).push(s.cell); });
+      const classes=Object.keys(byCls).sort((a,b)=>byCls[b].length-byCls[a].length);
+      for(const cls of classes){
+        const cells=byCls[cls]; const cands=[]; const axis=lineAxis(cells);
+        if(axis==='x'){ const y=cells[0].y, minx=Math.min(...cells.map(c=>c.x)), maxx=Math.max(...cells.map(c=>c.x)); cands.push({x:maxx+1,y},{x:minx-1,y}); }
+        else if(axis==='y'){ const x=cells[0].x, miny=Math.min(...cells.map(c=>c.y)), maxy=Math.max(...cells.map(c=>c.y)); cands.push({x,y:maxy+1},{x,y:miny-1}); }
+        if(!cands.length) cells.forEach(c=>neighbors(c).forEach(n=>cands.push(n)));
+        let free=cands.filter(c=>Rules.inBounds(c)&&!taken.has(key(c)));
+        if(free.length) return rng.pick(free);
+        free=[]; cells.forEach(c=>neighbors(c).forEach(n=>{ if(!taken.has(key(n))) free.push(n); }));
+        if(free.length) return rng.pick(free);
+      }
+    }
+    return huntShot(shots, mem, rng);
+  }
+  // Admiral: Hunter plus movement awareness.
+  //  chase.stage: 'confirm' (anchor re-fired, awaiting result) -> 'pursue' (anchor now MISS: ship moved along axis).
+  function admiralShot(shots, mem, rng){
+    const taken=shotMap(shots); const last=shots[shots.length-1]; const turn=shots.length;
+    if(mem.chase && mem.chase.stage==='confirm' && last && key(last.cell)===mem.chase.anchorKey){
+      if(last.result===RESULT.MISS){ mem.chase.stage='pursue'; mem.chase.tried=[]; mem.pursuits++; }
+      else { mem.confirmedAnchors[mem.chase.anchorKey]=turn; mem.chase=null; }
+    } else if(mem.chase && mem.chase.stage==='confirm'){ mem.chase=null; }
+    if(mem.chase && mem.chase.stage==='pursue'){
+      if(last && last.result!==RESULT.MISS && last.cls===mem.chase.cls){ mem.chase=null; }
+      else {
+        const ch=mem.chase, line=ch.line, cands=[];
+        if(ch.axis==='x'){ const y=line[0].y, minx=Math.min(...line.map(c=>c.x)), maxx=Math.max(...line.map(c=>c.x)); for(let d=1;d<=2;d++) cands.push({x:maxx+d,y},{x:minx-d,y}); }
+        else if(ch.axis==='y'){ const x=line[0].x, miny=Math.min(...line.map(c=>c.y)), maxy=Math.max(...line.map(c=>c.y)); for(let d=1;d<=2;d++) cands.push({x,y:maxy+d},{x,y:miny-d}); }
+        else { line.forEach(c=>neighbors(c).forEach(n=>cands.push(n))); }
+        const ok=cands.filter(c=>Rules.inBounds(c)&&!ch.tried.includes(key(c))&&!(taken.has(key(c))&&taken.get(key(c)).turn>ch.sinceTurn));
+        if(ok.length){ ch.tried.push(key(ok[0])); return ok[0]; }
+        mem.chase=null;
+      }
+    }
+    // A follow-up MISS adjacent to a live hit: re-fire that hit to learn whether the ship moved.
+    if(last && last.result===RESULT.MISS){
+      const live=liveHits(shots);
+      const near=live.filter(h=>Math.abs(h.cell.x-last.cell.x)+Math.abs(h.cell.y-last.cell.y)===1);
+      for(const anchor of near){
+        const ak=key(anchor.cell);
+        const recently=mem.confirmedAnchors[ak]!=null && turn-mem.confirmedAnchors[ak]<6;
+        if(recently) continue;
+        const sameCls=live.filter(h=>h.cls===anchor.cls).map(h=>h.cell);
+        const axis=lineAxis(sameCls)||(last.cell.x===anchor.cell.x?'y':'x');
+        mem.chase={stage:'confirm', anchor:anchor.cell, anchorKey:ak, cls:anchor.cls, axis, line:sameCls.length?sameCls:[anchor.cell], sinceTurn:last.turn};
+        mem.confirmChecks++;
+        return {x:anchor.cell.x, y:anchor.cell.y};
+      }
+    }
+    return hunterShot(shots, mem, rng);
+  }
+  function chooseShot(game, pid, rng){
+    const p=game.players[pid]; const mem=game.ai;
+    switch(mem.level){
+      case 'random': return randomShot(p.shots, rng);
+      case 'hunter': return hunterShot(p.shots, mem, rng);
+      default: return admiralShot(p.shots, mem, rng);
+    }
+  }
+  // Maneuver selection (Admiral only): move damaged ships away from recent hits; sometimes rotate undamaged ships out of a bracket.
+  function chooseManeuver(game, pid, rng){
+    const mem=game.ai; if(!mem||mem.level!=='admiral') return null;
+    const p=game.players[pid], enemy=game.players[Rules.other(pid)], fleet=p.fleet; if(!fleet) return null;
+    const recentShots=enemy.shots.slice(-6);
+    const dmg=fleet.map((s,i)=>({s,i})).filter(o=>!o.s.sunk&&!o.s.crippled&&Rules.hitCount(o.s)>0);
+    for(const o of dmg){
+      const hitCells=enemy.shots.filter(sh=>(sh.result===RESULT.HIT||sh.result===RESULT.CONFIRMED)&&sh.shipIdx===o.i).slice(-3).map(sh=>sh.cell);
+      const lastHit=hitCells[hitCells.length-1]||Rules.shipCells(o.s)[0];
+      const options=['advance','reverse'].map(t=>({t, r:Rules.canMove(fleet,o.i,t)})).filter(x=>x.r.ok);
+      if(!options.length) continue;
+      options.forEach(x=>{ x.score=Rules.shipCells(x.r.ship).reduce((a,c)=>a+Math.abs(c.x-lastHit.x)+Math.abs(c.y-lastHit.y),0); });
+      options.sort((a,b)=>b.score-a.score);
+      if(rng.chance(0.85)){ mem.movesMade++; return {ship:o.i, type:options[0].t}; }
+    }
+    const clean=fleet.map((s,i)=>({s,i})).filter(o=>!o.s.sunk&&Rules.hitCount(o.s)===0);
+    for(const o of rng.shuffle(clean)){
+      const cells=Rules.shipCells(o.s);
+      const bracketed=recentShots.some(sh=>cells.some(c=>Math.abs(c.x-sh.cell.x)+Math.abs(c.y-sh.cell.y)===1));
+      if(bracketed && rng.chance(0.5)){
+        const rots=rng.shuffle(['rotcw','rotccw']).filter(t=>Rules.canMove(fleet,o.i,t).ok);
+        if(rots.length){ mem.movesMade++; return {ship:o.i, type:rots[0]}; }
+        const slides=rng.shuffle(['advance','reverse']).filter(t=>Rules.canMove(fleet,o.i,t).ok);
+        if(slides.length){ mem.movesMade++; return {ship:o.i, type:slides[0]}; }
+      }
+    }
+    return null;
+  }
+  // Full AI turn on a local game (maneuver, then fire unless it rotated).
+  function takeTurn(game, pid, rng){
+    let g=Rules.clone(game); if(!g.ai) g.ai=initMemory(g.aiLevel||'hunter');
+    let move=null, rotated=false;
+    const mv=chooseManeuver(g, pid, rng);
+    if(mv){ const r=Rules.maneuver(g, pid, mv.ship, mv.type); if(r.ok){ g=r.game; move=mv; rotated=!!r.ended; } }
+    if(rotated) return {game:g, move, shot:null, rotated};
+    const cell=chooseShot(g, pid, rng);
+    const fr=Rules.fire(g, pid, cell);
+    if(!fr.ok) return {game:g, move, shot:null, rotated:false, error:fr.reason};
+    return {game:fr.game, move, shot:fr.shot, rotated:false};
+  }
+  return { initMemory, placeFleet, chooseShot, chooseManeuver, takeTurn, randomShot, hunterShot, admiralShot, liveHits };
+})();
+
+/* ============================================================
