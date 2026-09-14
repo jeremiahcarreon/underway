@@ -1524,7 +1524,7 @@ const Render = (function(){
         case 'line': ctx.lineWidth=p.w*h; ctx.beginPath(); ctx.moveTo(x+p.x1*w,y+p.y1*h); ctx.lineTo(x+p.x2*w,y+p.y2*h); ctx.stroke(); break;
         case 'star': { const pts=starPts(x+p.cx*w, y+p.cy*h, p.r*h, p.n, -Math.PI/2); ctx.beginPath(); pts.forEach((q,i)=>i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1])); ctx.closePath(); ctx.fill(); break; }
         case 'arc': ctx.lineWidth=p.w*h; ctx.beginPath(); ctx.arc(x+p.cx*w, y+p.cy*h, p.r*h, p.a0, p.a1, true); ctx.stroke(); break;
-        case 'rays': { const polys=rayPolys(p.cx,p.cy,p.n); ctx.beginPath(); polys.forEach(poly=>{ poly.forEach((q,i)=>{ const px=x+q[0]*w, py=y+q[1]*h*(w/h)/(w/h); const sx=x+q[0]*w, sy=y+q[1]*h; if(i) ctx.lineTo(sx,sy); else ctx.moveTo(sx,sy); }); ctx.closePath(); }); ctx.fill(); break; }
+        case 'rays': { const polys=rayPolys(p.cx,p.cy,p.n); ctx.beginPath(); polys.forEach(poly=>{ poly.forEach((q,i)=>{ const sx=x+q[0]*w, sy=y+q[1]*h; if(i) ctx.lineTo(sx,sy); else ctx.moveTo(sx,sy); }); ctx.closePath(); }); ctx.fill(); break; }
       }
     }
     ctx.restore();
@@ -1602,7 +1602,7 @@ const Render = (function(){
   function turret(ctx,x,y,r,fwd,col){ ctx.fillStyle=col; ctx.beginPath(); ctx.arc(x,y,r,0,TAU); ctx.fill(); ctx.strokeStyle=shade(col,-40); ctx.lineWidth=Math.max(1,r*0.35); ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+(fwd?r*2.2:-r*2.2),y); ctx.stroke(); }
   function plane(ctx,x,y,s,col){ ctx.fillStyle=col; ctx.beginPath(); ctx.moveTo(x+s,y); ctx.lineTo(x-s*0.6,y-s*0.7); ctx.lineTo(x-s*0.3,y); ctx.lineTo(x-s*0.6,y+s*0.7); ctx.closePath(); ctx.fill(); }
   // Top-down sprite in local coordinates (bow at +x). L = length px, B = beam px.
-  function drawHullTop(ctx, cls, L, B, liv, t, state){
+  function drawHullTop(ctx, cls, L, B, liv){
     const hull=liv.hull, deck=liv.deck, sup=liv.super, acc=liv.accent; const c=L/SHIP_CLASSES[cls].size; // c = one cell
     switch(cls){
       case 'carrier': {
@@ -1691,7 +1691,7 @@ const Render = (function(){
     if(opts.ghost){ ctx.globalAlpha*=0.55; }
     if(mob==='crippled'){ drawOilSlick(ctx,L,B,c,Math.min(1,((opts.turn||o.turn||1)-(ship.crippledTurn||0)+1)/4)); }
     else if(!opts.ghost && !o.static){ drawWake(ctx,L,B,c,t,cls==='patrol'||cls==='submarine'); drawEngineGlow(ctx,L,B,c); }
-    drawHullTop(ctx, cls, L, B, liv, t);
+    drawHullTop(ctx, cls, L, B, liv);
     drawFlagOnStern(ctx, navyId, L, B, c);
     if(opts.selected){ ctx.strokeStyle='#ffb347'; ctx.lineWidth=Math.max(2,c*0.07); ctx.setLineDash([c*0.2,c*0.12]); hullPath(ctx,L*1.08,B*1.5,0.25); ctx.stroke(); ctx.setLineDash([]); }
     if(opts.ghost){ ctx.strokeStyle=opts.ghostOk?'#3ecf8e':'#e0453b'; ctx.lineWidth=2; hullPath(ctx,L*1.06,B*1.4,0.25); ctx.stroke(); }
@@ -1700,10 +1700,9 @@ const Render = (function(){
     if(!opts.noState && !opts.wreck){
       cells.forEach((cell,i)=>{ if(!hits[i]) return; const p=o.cellCenter(cell); drawFire(ctx,p.x,p.y+bob,c*0.28,o.static?0:t,i+cells[0].x); if(!o.static) drawSmoke(ctx,p.x,p.y+bob,c*0.16,t,i+cells[0].y); });
       if(mob==='crippled'){
-        const s=o.cellCenter(cells[n-1]); ctx.font='bold '+Math.max(8,Math.round(c*0.26))+'px system-ui,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.font='bold '+Math.max(8,Math.round(c*0.26))+'px system-ui,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
         const label='DEAD IN THE WATER'; const tw=ctx.measureText(label).width+8; const bx=Math.min(o.w-tw-2,Math.max(2,cx-tw/2)), by=Math.min(o.h-c*0.4,cy+B*0.9);
         ctx.fillStyle='rgba(10,10,14,0.8)'; ctx.fillRect(bx,by-c*0.16,tw,c*0.32); ctx.fillStyle='#ff9a90'; ctx.fillText(label,bx+tw/2,by);
-        void s;
       }
     }
   }
