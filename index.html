@@ -1276,7 +1276,7 @@ class Channel {
 // PeerJS link. Emits: status(state, detail), open(), data(env), roomFull(), fatal(message)
 class Link {
   constructor(opts){
-    this.role=opts.role; this.code=opts.code; this.on=opts.on||{};
+    this.role=opts.role; this.code=opts.code; this.on=opts.on||{}; this.peerOpts=opts.peerOpts||null;
     this.hostId='underway-'+this.code.toLowerCase()+'-host'; this.guestId='underway-'+this.code.toLowerCase()+'-guest';
     this.myId=this.role==='host'?this.hostId:this.guestId;
     this.peer=null; this.conn=null; this.state='init'; this.lastHeard=0; this.closed=false;
@@ -1296,7 +1296,7 @@ class Link {
     try{ if(this.peer){ this.peer.destroy(); } }catch(e){}
     const id=this.myId+this.suffix;
     let p;
-    try{ p=new Peer(id,{debug:0}); }catch(e){ this.setState('error',String(e)); this.emit('fatal','Could not create a peer: '+e.message); return; }
+    try{ p=new Peer(id,Object.assign({debug:0},this.peerOpts||{})); }catch(e){ this.setState('error',String(e)); this.emit('fatal','Could not create a peer: '+e.message); return; }
     this.peer=p;
     p.on('open',()=>{ if(this.closed) return; this.idTries=0; this.rcTries=0; this.setState('registered'); if(this.role==='guest') this.connectToHost(); else this.setState('waiting','waiting for opponent'); });
     p.on('connection',c=>this.onIncoming(c));
