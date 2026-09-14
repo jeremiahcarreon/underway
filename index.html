@@ -1352,3 +1352,46 @@ class Link {
 const Net = { Channel, Link, UNRELIABLE };
 
 /* ============================================================
+   SECTION 6 — PERSISTENCE (localStorage, key underway:<room>)
+   Only the local player's fleet is ever stored; the opponent's fleet is stored only when legitimately
+   revealed (sunk footprints live in shots) or received at game end for the replay.
+   ============================================================ */
+const Store = (function(){
+  const mem = {}; // in-memory fallback (private mode, tests)
+  let backend = null;
+  function be(){
+    if(backend) return backend;
+    try{ const t='__underway_probe'; localStorage.setItem(t,'1'); localStorage.removeItem(t); backend=localStorage; }
+    catch(e){ backend={ getItem:k=>(k in mem?mem[k]:null), setItem:(k,v)=>{mem[k]=String(v);}, removeItem:k=>{delete mem[k];}, key:i=>Object.keys(mem)[i], get length(){ return Object.keys(mem).length; } }; }
+    return backend;
+  }
+  const KEY = room => 'underway:'+String(room).toUpperCase();
+  const SETTINGS_KEY = 'underway:settings';
+  const LAST_KEY = 'underway:last';
+  const DEFAULT_SETTINGS = { volume:0.7, mute:false, voice:false, fast:false, reduced:false, ambient:false, name:'' };
+  function sanitizeGame(game, role){
+    // Strip anything about the opponent that has not been legitimately revealed.
+    const g = Rules.clone(game);
+    if(g.mode==='net' && (role==='host'||role==='guest')){
+      const me = role; const them = Rules.other(me);
+      if(g.stage!=='over'){ g.players[them].fleet=null; g.players[them].initialFleet=null; g.players[them].moves=[]; g.log=g.log.filter(e=>!(e.kind==='move'&&e.player===them)); }
+    }
+    return g;
+  }
+  function save(session){
+    if(!session||!session.room) return false;
+    const data = { v:1, savedAt:Date.now(), room:session.room, role:session.role, mode:session.mode, aiLevel:session.aiLevel||null,
+                   name:session.name, navy:session.navy, game: sanitizeGame(session.game, session.role), net: session.net||null, rngState: session.rngState||null,
+                   settings: loadSettings(), ui: session.ui||null };
+    try{ be().setItem(KEY(session.room), JSON.stringify(data)); be().setItem(LAST_KEY, String(session.room).toUpperCase()); return true; }catch(e){ console.warn('save failed',e); return false; }
+  }
+  function load(room){ try{ const s=be().getItem(KEY(room)); return s?JSON.parse(s):null; }catch(e){ return null; } }
+  function remove(room){ try{ be().removeItem(KEY(room)); if(getLast()===String(room).toUpperCase()) be().removeItem(LAST_KEY); }catch(e){} }
+  function getLast(){ try{ return be().getItem(LAST_KEY); }catch(e){ return null; } }
+  function loadSettings(){ try{ const s=be().getItem(SETTINGS_KEY); return Object.assign({},DEFAULT_SETTINGS,s?JSON.parse(s):{}); }catch(e){ return Object.assign({},DEFAULT_SETTINGS); } }
+  function saveSettings(s){ try{ be().setItem(SETTINGS_KEY, JSON.stringify(Object.assign({},DEFAULT_SETTINGS,s))); }catch(e){} }
+  function useMemoryBackend(){ backend={ getItem:k=>(k in mem?mem[k]:null), setItem:(k,v)=>{mem[k]=String(v);}, removeItem:k=>{delete mem[k];} }; }
+  return { save, load, remove, getLast, loadSettings, saveSettings, DEFAULT_SETTINGS, KEY, sanitizeGame, useMemoryBackend };
+})();
+
+/* ============================================================
