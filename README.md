@@ -1,6 +1,6 @@
 # UNDERWAY
 
-A two-player, browser-based naval combat game where the fleets can move. One self-contained `index.html`; the only external dependency is PeerJS from a CDN. Open the file from `file://` or any static host. Append `?test=1` to run the rules-engine self-test suite.
+A two-player, browser-based naval combat game where the fleets can move. One self-contained `index.html`; the only external dependency is PeerJS from a CDN. Open the file from `file://` or any static host. Append `?test=1` to run the rules-engine self-test suite. By default players find each other through the public PeerJS signaling server; to use your own PeerJS server (`npx peer --port 9000`), open the game once with `?peer=host:port` (or `?peer=https://host/path`) and the setting is remembered.
 
 ## Rule interpretations (where the brief was silent or ambiguous)
 
