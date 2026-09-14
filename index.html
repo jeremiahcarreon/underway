@@ -1280,7 +1280,7 @@ class Link {
     this.hostId='underway-'+this.code.toLowerCase()+'-host'; this.guestId='underway-'+this.code.toLowerCase()+'-guest';
     this.myId=this.role==='host'?this.hostId:this.guestId;
     this.peer=null; this.conn=null; this.state='init'; this.lastHeard=0; this.closed=false;
-    this.idTries=0; this.connectTries=0; this.timers={}; this.suffix='';
+    this.idTries=0; this.connectTries=0; this.rcTries=0; this.timers={}; this.suffix='';
   }
   emit(ev, ...a){ if(this.on[ev]) try{ this.on[ev](...a); }catch(e){ console.error(e); } }
   setState(s, detail){ if(this.state!==s||detail){ this.state=s; this.emit('status', s, detail||''); } }
@@ -1298,10 +1298,10 @@ class Link {
     let p;
     try{ p=new Peer(id,{debug:0}); }catch(e){ this.setState('error',String(e)); this.emit('fatal','Could not create a peer: '+e.message); return; }
     this.peer=p;
-    p.on('open',()=>{ if(this.closed) return; this.idTries=0; this.setState('registered'); if(this.role==='guest') this.connectToHost(); else this.setState('waiting','waiting for opponent'); });
+    p.on('open',()=>{ if(this.closed) return; this.idTries=0; this.rcTries=0; this.setState('registered'); if(this.role==='guest') this.connectToHost(); else this.setState('waiting','waiting for opponent'); });
     p.on('connection',c=>this.onIncoming(c));
-    p.on('disconnected',()=>{ if(this.closed) return; this.setState('reconnecting','signaling lost'); this.timers.rc=setTimeout(()=>{ try{ p.reconnect(); }catch(e){ this.openPeer(); } }, 1500); });
-    p.on('close',()=>{ if(this.closed) return; this.setState('reconnecting','peer closed'); this.timers.rc=setTimeout(()=>this.openPeer(), 2000); });
+    p.on('disconnected',()=>{ if(this.closed) return; this.setState('reconnecting','signaling lost'); clearTimeout(this.timers.rc); this.timers.rc=setTimeout(()=>{ try{ p.reconnect(); }catch(e){ this.openPeer(); } }, this.backoff()); });
+    p.on('close',()=>{ if(this.closed) return; this.setState('reconnecting','peer closed'); clearTimeout(this.timers.rc); this.timers.rc=setTimeout(()=>this.openPeer(), this.backoff()); });
     p.on('error',err=>this.onPeerError(err));
   }
   onPeerError(err){
@@ -1320,7 +1320,7 @@ class Link {
       this.timers.rc=setTimeout(()=>this.connectToHost(), delay);
     } else if(t==='network'||t==='server-error'||t==='socket-error'||t==='socket-closed'){
       this.setState('reconnecting','signaling server unreachable');
-      this.timers.rc=setTimeout(()=>{ try{ this.peer.reconnect(); }catch(e){ this.openPeer(); } }, 3000);
+      clearTimeout(this.timers.rc); this.timers.rc=setTimeout(()=>{ try{ this.peer.reconnect(); }catch(e){ this.openPeer(); } }, this.backoff());
       this.emit('signalError','The PeerJS signaling server is unreachable. Retrying…');
     } else if(t==='browser-incompatible'){
       this.setState('error','browser incompatible'); this.emit('fatal','This browser does not support WebRTC data channels.');
@@ -1329,6 +1329,8 @@ class Link {
       this.setState('reconnecting', t||'error');
     }
   }
+  // Exponential backoff for signaling reconnects: 1.5 s, 3 s, 6 s, 12 s, then 20 s.
+  backoff(){ const d=Math.min(20000, 1500*Math.pow(2, this.rcTries)); this.rcTries=Math.min(this.rcTries+1, 6); return d; }
   connectToHost(){
     if(this.closed||this.role!=='guest'||!this.peer||this.peer.destroyed) return;
     if(this.peer.disconnected){ try{ this.peer.reconnect(); }catch(e){} this.timers.rc=setTimeout(()=>this.connectToHost(),1500); return; }
@@ -1368,7 +1370,7 @@ class Link {
   }
   send(env){ if(this.conn && this.conn.open){ try{ this.conn.send(env); return true; }catch(e){ return false; } } return false; }
   get online(){ return !!(this.conn && this.conn.open); }
-  retryNow(){ this.connectTries=0; this.idTries=0; if(this.role==='guest'){ if(!this.peer||this.peer.destroyed) this.openPeer(); else this.connectToHost(); } else this.openPeer(); }
+  retryNow(){ this.connectTries=0; this.idTries=0; this.rcTries=0; clearTimeout(this.timers.rc); if(this.role==='guest'){ if(!this.peer||this.peer.destroyed) this.openPeer(); else this.connectToHost(); } else this.openPeer(); }
   destroy(){ this.closed=true; Object.values(this.timers).forEach(t=>{ clearTimeout(t); clearInterval(t); }); try{ if(this.conn) this.conn.close(); }catch(e){} try{ if(this.peer) this.peer.destroy(); }catch(e){} this.conn=null; this.peer=null; this.setState('closed'); }
 }
 const Net = { Channel, Link, UNRELIABLE };
