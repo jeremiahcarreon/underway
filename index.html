@@ -2233,7 +2233,7 @@ const UI = (function(){
   function bindPlaceCanvas(){
     const o=S.oceans.place; const cv=o.canvas; let down=null;
     const shipAt=cell=>{ for(let i=0;i<S.place.fleet.length;i++){ const s=S.place.fleet[i]; if(!s.bow) continue; const sec=Rules.sectionAt(s,cell); if(sec>=0) return {i,sec}; } return null; };
-    cv.addEventListener('pointerdown',e=>{ if(S.place.locked) return; Sfx.unlock(); const cell=o.cellAt(e.clientX,e.clientY); if(!cell) return; e.preventDefault(); cv.setPointerCapture(e.pointerId);
+    cv.addEventListener('pointerdown',e=>{ if(S.place.locked) return; Sfx.unlock(); const cell=o.cellAt(e.clientX,e.clientY); if(!cell) return; e.preventDefault(); try{ cv.setPointerCapture(e.pointerId); }catch(err){}
       const hit=shipAt(cell);
       if(hit){ S.place.sel=hit.i; down={i:hit.i, sec:hit.sec, start:cell, moved:false, orig:{bow:S.place.fleet[hit.i].bow, heading:S.place.fleet[hit.i].heading}}; renderPlacement(); }
       else { const i=S.place.sel; if(i<0) return; const s=S.place.fleet[i]; tryPlace(i, cell, s.heading); down=null; } });
@@ -2291,7 +2291,6 @@ const UI = (function(){
     $('#own-badge').textContent=Rules.sunkCount(my.fleet||[])+'/5 lost'; const t=Rules.classTally(my.shots); $('#enemy-badge').textContent=Object.values(t).filter(x=>x.sunk).length+'/5 sunk';
     renderDocks(); renderTally(t); renderActions(); renderConn(S.linkState,'');
     const burning=(my.fleet||[]).some(s=>!s.sunk&&Rules.hitCount(s)>0)||AI.liveHits(my.shots).length>0; Sfx.fireLoop(burning && !g.winner);
-    document.documentElement.style.setProperty('--accent', navy(own.navyId).livery.accent==='#000000'?'#ffb347':'#ffb347');
   }
   function renderDocks(){
     const g=S.game; const my=g.players[me()], op=g.players[them()];
