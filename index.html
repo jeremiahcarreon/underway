@@ -2091,12 +2091,12 @@ const UI = (function(){
     disconnect();
     S.chan=new Net.Channel({send:env=>S.link&&S.link.send(env), onMessage:handleMessage, onGap:()=>{ if(S.chan) S.chan.send('RESYNC_REQUEST',{lastSeqIn:S.chan.lastSeqIn}); }});
     S.link=new Net.Link({role:S.role, code:S.room, on:{
-      status:(st,detail)=>{ S.linkState=st; renderConn(st,detail); if(st==='online'&&S.role==='host'){ S.lobby.guestOnline=true; } if(st!=='online'&&S.role==='host'){ S.lobby.guestOnline=false; } if(S.screen==='lobby') renderLobby(); },
+      status:(st,detail)=>{ S.linkState=st; renderConn(st,detail); if(st==='online'){ S.signalErrorShown=false; if(document.getElementById('error-title').textContent==='Signaling server unreachable') overlay('ov-error',false); } if(st==='online'&&S.role==='host'){ S.lobby.guestOnline=true; } if(st!=='online'&&S.role==='host'){ S.lobby.guestOnline=false; } if(S.screen==='lobby') renderLobby(); },
       open:()=>{ sendHello(); S.chan.send('RESYNC_REQUEST',{lastSeqIn:S.chan.lastSeqIn}); S.chan.resendFrom(S.chan.lastAckIn); if(S.role==='host') sendLobby(); },
       data:env=>{ S.chan.receive(env); },
       roomFull:()=>{ showError('Room full','That room already has two players. If one of them is your own earlier session, wait a moment and retry; otherwise ask for a new room code.', true); },
       fatal:msg=>{ showError('Connection problem', msg, true); },
-      signalError:msg=>{ renderConn('reconnecting', msg); },
+      signalError:msg=>{ renderConn('reconnecting', msg); if(!S.signalErrorShown){ S.signalErrorShown=true; showError('Signaling server unreachable', 'The PeerJS signaling server could not be reached, so players cannot find each other. Check your connection and retry; the game keeps retrying in the background.', true); } },
     }});
     S.link.start();
     S.tickTimer=setInterval(()=>{ if(S.chan) S.chan.tick(); }, 1000);
