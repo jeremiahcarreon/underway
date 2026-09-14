@@ -2067,3 +2067,66 @@ const Cine = (function(){
 })();
 
 /* ============================================================
+   SECTION 12 — REVEAL REPLAY (both oceans side by side, timeline scrubber, every silent move)
+   ============================================================ */
+const Replay = (function(){
+  let oceanA=null, oceanB=null, events=[], game=null, pos=0, playing=false, timer=0, cache=[];
+  function build(g){
+    // Merge every event (moves from both sides + shots) in order of turn, then move-before-shot.
+    const evs=g.log.slice();
+    const order={move:0,shot:1};
+    evs.sort((a,b)=>a.turn-b.turn||order[a.kind]-order[b.kind]||(a.n||0)-(b.n||0));
+    return evs;
+  }
+  function stateAt(k){
+    if(cache[k]) return cache[k];
+    let base = k>0 ? stateAt(k-1) : { fleets:{host:Rules.clone(game.players.host.initialFleet||[]), guest:Rules.clone(game.players.guest.initialFleet||[])}, shots:{host:[],guest:[]} };
+    const st={fleets:{host:Rules.clone(base.fleets.host),guest:Rules.clone(base.fleets.guest)}, shots:{host:base.shots.host.slice(),guest:base.shots.guest.slice()}};
+    if(k>0){
+      const e=events[k-1];
+      if(e.kind==='move'){ const f=st.fleets[e.player]; if(f[e.ship]&&f[e.ship].bow){ f[e.ship].bow=Rules.clone(e.to.bow); f[e.ship].heading=e.to.heading; } }
+      else if(e.kind==='shot'){ const def=Rules.other(e.player); const f=st.fleets[def]; if(f.length){ const r=Rules.resolveShot(f,e.cell,e.turn); st.fleets[def]=r.fleet; } st.shots[e.player].push(e); }
+    }
+    cache[k]=st; return st;
+  }
+  function describe(k){
+    if(k===0) return 'Start of battle. Drag the slider or press play to watch every turn, including the silent moves.';
+    const e=events[k-1]; const p=game.players[e.player]; const who=p.name+' ('+navy(p.navy).name+')';
+    if(e.kind==='move'){ const verb={advance:'advanced',reverse:'reversed',rotcw:'rotated clockwise',rotccw:'rotated counter-clockwise'}[e.type]; return 'Turn '+e.turn+' · '+who+' '+verb+' '+SHIP_CLASSES[e.cls].name+' — a silent move ('+cellName(e.from.bow)+' '+e.from.heading+' → '+cellName(e.to.bow)+' '+e.to.heading+')'; }
+    return 'Turn '+e.turn+' · '+who+' fired at '+cellName(e.cell)+': '+Rules.resultText(e);
+  }
+  function render(){
+    const st=stateAt(pos);
+    oceanA.fleet=st.fleets.host; oceanA.navyId=game.players.host.navy; oceanA.pegs=Rules.pegMap(st.shots.guest); oceanA.turn=pos>0?events[pos-1].turn:1;
+    oceanB.fleet=st.fleets.guest; oceanB.navyId=game.players.guest.navy; oceanB.pegs=Rules.pegMap(st.shots.host); oceanB.turn=oceanA.turn;
+    if(pos>0){ const e=events[pos-1]; if(e.kind==='shot'){ (e.player==='host'?oceanB:oceanA).target=e.cell; (e.player==='host'?oceanA:oceanB).target=null; } else { oceanA.target=null; oceanB.target=null; (e.player==='host'?oceanA:oceanB).selected=e.ship; (e.player==='host'?oceanB:oceanA).selected=-1; } }
+    else { oceanA.target=oceanB.target=null; oceanA.selected=oceanB.selected=-1; }
+    if(pos>0 && events[pos-1].kind==='shot'){ oceanA.selected=-1; oceanB.selected=-1; }
+    document.getElementById('rp-scrub').value=String(pos); document.getElementById('rp-pos').textContent=pos+' / '+events.length; document.getElementById('rp-info').textContent=describe(pos);
+    document.getElementById('rp-play').textContent=playing?'⏸':'▶';
+  }
+  function seek(k){ pos=Math.max(0,Math.min(events.length,k)); render(); }
+  function step(d){ seek(pos+d); }
+  function play(){ if(playing){ stop(); return; } if(pos>=events.length) pos=0; playing=true; render(); timer=setInterval(()=>{ if(pos>=events.length){ stop(); return; } step(1); }, Anim.settings.fast?350:900); }
+  function stop(){ playing=false; clearInterval(timer); timer=0; render(); }
+  function open(g){
+    game=g; events=build(g); cache=[]; pos=0; playing=false; clearInterval(timer);
+    if(!oceanA){ oceanA=Render.register(Render.createOcean(document.getElementById('replayA'),{kind:'own'})); oceanB=Render.register(Render.createOcean(document.getElementById('replayB'),{kind:'replayB'})); }
+    oceanA.resize(); oceanB.resize();
+    document.getElementById('replayA-label').textContent=g.players.host.name+' · '+navy(g.players.host.navy).name;
+    document.getElementById('replayB-label').textContent=g.players.guest.name+' · '+navy(g.players.guest.navy).name;
+    const sc=document.getElementById('rp-scrub'); sc.max=String(events.length); sc.value='0';
+    render();
+  }
+  function close(){ stop(); }
+  function bind(){
+    document.getElementById('rp-scrub').addEventListener('input',e=>{ stop(); seek(parseInt(e.target.value,10)||0); });
+    document.getElementById('rp-start').addEventListener('click',()=>{ stop(); seek(0); });
+    document.getElementById('rp-prev').addEventListener('click',()=>{ stop(); step(-1); });
+    document.getElementById('rp-next').addEventListener('click',()=>{ stop(); step(1); });
+    document.getElementById('rp-play').addEventListener('click',play);
+  }
+  return { open, close, bind, seek, step, play, stop, build, stateAt, describe, get events(){ return events; } };
+})();
+
+/* ============================================================
