@@ -2092,7 +2092,7 @@ const UI = (function(){
   function connect(){
     disconnect();
     S.chan=new Net.Channel({send:env=>S.link&&S.link.send(env), onMessage:handleMessage, onGap:()=>{ if(S.chan) S.chan.send('RESYNC_REQUEST',{lastSeqIn:S.chan.lastSeqIn}); }});
-    S.link=new Net.Link({role:S.role, code:S.room, on:{
+    S.link=new Net.Link({role:S.role, code:S.room, peerOpts:peerOptions(), on:{
       status:(st,detail)=>{ S.linkState=st; renderConn(st,detail); if(st==='online'){ S.signalErrorShown=false; if(document.getElementById('error-title').textContent==='Signaling server unreachable') overlay('ov-error',false); } if(st==='online'&&S.role==='host'){ S.lobby.guestOnline=true; } if(st!=='online'&&S.role==='host'){ S.lobby.guestOnline=false; } if(S.screen==='lobby') renderLobby(); },
       open:()=>{ sendHello(); S.chan.send('RESYNC_REQUEST',{lastSeqIn:S.chan.lastSeqIn}); S.chan.resendFrom(S.chan.lastAckIn); if(S.role==='host') sendLobby(); },
       data:env=>{ S.chan.receive(env); },
@@ -2102,6 +2102,11 @@ const UI = (function(){
     }});
     S.link.start();
     S.tickTimer=setInterval(()=>{ if(S.chan) S.chan.tick(); }, 1000);
+  }
+  // Optional self-hosted signaling server: ?peer=host:port[/path] (or https://host:port/path). Remembered in settings.
+  function peerOptions(){
+    const raw=(S.settings&&S.settings.peer)||''; if(!raw) return null;
+    try{ const u=new URL(/^https?:\/\//.test(raw)?raw:'http://'+raw); return {host:u.hostname, port:parseInt(u.port,10)||(u.protocol==='https:'?443:80), path:u.pathname||'/', secure:u.protocol==='https:'}; }catch(e){ return null; }
   }
   function disconnect(){ if(S.link){ S.link.destroy(); S.link=null; } S.chan=null; clearInterval(S.tickTimer); renderConn('offline',''); }
   function send(type, payload){ if(S.chan) S.chan.send(type, payload); save(); }
@@ -2518,6 +2523,7 @@ const UI = (function(){
     document.addEventListener('visibilitychange',()=>{ if(!document.hidden && S.link && S.link.peer && S.link.peer.disconnected){ try{ S.link.peer.reconnect(); }catch(e){} } });
     window.addEventListener('beforeunload',()=>save());
     const params=new URLSearchParams(location.search);
+    if(params.has('peer')){ S.settings.peer=params.get('peer')||''; Store.saveSettings(S.settings); }
     if(params.get('test')==='1'){ runTestsScreen(); return; }
     const room=(params.get('room')||'').toUpperCase();
     if(room){ const saved=Store.load(room); if(saved){ showScreen('home'); renderHome(); offerResume(saved); } else { S.aiLevel='hunter'; $('#home-name').value=S.settings.name||''; if(!S.settings.name){ showScreen('home'); renderHome(); $('#join-panel').classList.remove('hidden'); $('#join-code').value=room; toast('Enter your name, then Join to enter room '+room,'',4000); } else startNet('guest', room); } return; }
