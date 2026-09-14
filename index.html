@@ -1117,7 +1117,10 @@ const AI = (function(){
     return huntShot(shots, mem, rng);
   }
   // Admiral: Hunter plus movement awareness.
-  //  chase.stage: 'confirm' (anchor re-fired, awaiting result) -> 'pursue' (anchor now MISS: ship moved along axis).
+  //  * A damaged ship cannot rotate, so once two hits of one class align its axis is fixed: keep sweeping that line.
+  //  * Cells fired before the class's latest fresh HIT are "fresh" again (the ship may have moved into them).
+  //  * When a bracket shot misses next to a live hit, re-fire that hit: CONFIRMED = still there (try the other way),
+  //    MISS = it moved (pursue along the axis, away from the miss first).
   function admiralShot(shots, mem, rng){
     const taken=shotMap(shots); const last=shots[shots.length-1]; const turn=shots.length;
     if(mem.chase && mem.chase.stage==='confirm' && last && key(last.cell)===mem.chase.anchorKey){
@@ -1127,31 +1130,47 @@ const AI = (function(){
     if(mem.chase && mem.chase.stage==='pursue'){
       if(last && last.result!==RESULT.MISS && last.cls===mem.chase.cls){ mem.chase=null; }
       else {
-        const ch=mem.chase, line=ch.line, cands=[];
-        if(ch.axis==='x'){ const y=line[0].y, minx=Math.min(...line.map(c=>c.x)), maxx=Math.max(...line.map(c=>c.x)); for(let d=1;d<=2;d++) cands.push({x:maxx+d,y},{x:minx-d,y}); }
-        else if(ch.axis==='y'){ const x=line[0].x, miny=Math.min(...line.map(c=>c.y)), maxy=Math.max(...line.map(c=>c.y)); for(let d=1;d<=2;d++) cands.push({x,y:maxy+d},{x,y:miny-d}); }
-        else { line.forEach(c=>neighbors(c).forEach(n=>cands.push(n))); }
-        const ok=cands.filter(c=>Rules.inBounds(c)&&!ch.tried.includes(key(c))&&!(taken.has(key(c))&&taken.get(key(c)).turn>ch.sinceTurn));
+        const ch=mem.chase, a=ch.anchor, md=ch.missDir||{x:0,y:0}; const cands=[];
+        const dirs = ch.axis==='x' ? [{x:-md.x||-1,y:0},{x:md.x||1,y:0}] : ch.axis==='y' ? [{x:0,y:-md.y||-1},{x:0,y:md.y||1}] : [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
+        for(let d=1;d<=3;d++) dirs.forEach(dv=>cands.push({x:a.x+dv.x*d,y:a.y+dv.y*d}));
+        const ok=cands.filter(c=>Rules.inBounds(c)&&!ch.tried.includes(key(c))&&!(taken.has(key(c))&&taken.get(key(c)).turn>ch.sinceTurn)&&!(taken.has(key(c))&&taken.get(key(c)).result!==RESULT.MISS));
         if(ok.length){ ch.tried.push(key(ok[0])); return ok[0]; }
         mem.chase=null;
       }
     }
+    const live=liveHits(shots);
     // A follow-up MISS adjacent to a live hit: re-fire that hit to learn whether the ship moved.
-    if(last && last.result===RESULT.MISS){
-      const live=liveHits(shots);
+    if(last && last.result===RESULT.MISS && live.length){
       const near=live.filter(h=>Math.abs(h.cell.x-last.cell.x)+Math.abs(h.cell.y-last.cell.y)===1);
       for(const anchor of near){
         const ak=key(anchor.cell);
-        const recently=mem.confirmedAnchors[ak]!=null && turn-mem.confirmedAnchors[ak]<6;
-        if(recently) continue;
+        if(mem.confirmedAnchors[ak]!=null && turn-mem.confirmedAnchors[ak]<6) continue;
         const sameCls=live.filter(h=>h.cls===anchor.cls).map(h=>h.cell);
         const axis=lineAxis(sameCls)||(last.cell.x===anchor.cell.x?'y':'x');
-        mem.chase={stage:'confirm', anchor:anchor.cell, anchorKey:ak, cls:anchor.cls, axis, line:sameCls.length?sameCls:[anchor.cell], sinceTurn:last.turn};
+        mem.chase={stage:'confirm', anchor:anchor.cell, anchorKey:ak, cls:anchor.cls, axis, line:sameCls.length?sameCls:[anchor.cell], sinceTurn:last.turn, missDir:{x:Math.sign(last.cell.x-anchor.cell.x),y:Math.sign(last.cell.y-anchor.cell.y)}};
         mem.confirmChecks++;
         return {x:anchor.cell.x, y:anchor.cell.y};
       }
     }
-    return hunterShot(shots, mem, rng);
+    // Freshness-aware bracket along the known axis.
+    if(live.length){
+      const byCls={}; live.forEach(s=>{ (byCls[s.cls]=byCls[s.cls]||[]).push(s); });
+      const latestTurn=cls=>Math.max(...byCls[cls].map(h=>h.turn));
+      const classes=Object.keys(byCls).sort((a,b)=>latestTurn(b)-latestTurn(a));
+      for(const cls of classes){
+        const hits=byCls[cls]; const cells=hits.map(h=>h.cell); const axis=lineAxis(cells);
+        const freshHits=shots.filter(s=>s.cls===cls&&s.result===RESULT.HIT); const latestHit=freshHits.length?Math.max(...freshHits.map(s=>s.turn)):0;
+        const recent=hits.slice().sort((a,b)=>b.turn-a.turn)[0].cell;
+        const cands=[]; const seen=new Set();
+        const push=(c,pri)=>{ if(!Rules.inBounds(c)) return; const k=key(c); if(seen.has(k)) return; if(cells.some(h=>key(h)===k)) return; const t=taken.get(k); if(t && t.result!==RESULT.MISS) return; if(t && t.turn>=latestHit) return; seen.add(k); cands.push({c,pri:pri+(t?0.5:0)}); };
+        if(axis){ const dirs=axis==='x'?[{x:1,y:0},{x:-1,y:0}]:[{x:0,y:1},{x:0,y:-1}]; for(let d=1;d<=3;d++) dirs.forEach(dv=>push({x:recent.x+dv.x*d,y:recent.y+dv.y*d},d)); cells.forEach(c=>dirs.forEach(dv=>push({x:c.x+dv.x,y:c.y+dv.y},1.25))); }
+        else neighbors(recent).forEach(c=>push(c,1));
+        if(cands.length){ cands.sort((a,b)=>a.pri-b.pri); const best=cands.filter(x=>x.pri===cands[0].pri); return rng.pick(best).c; }
+        const ak=key(recent);
+        if(!(mem.confirmedAnchors[ak]!=null && turn-mem.confirmedAnchors[ak]<4)){ mem.chase={stage:'confirm', anchor:recent, anchorKey:ak, cls, axis, line:cells, sinceTurn:turn, missDir:{x:0,y:0}}; mem.confirmChecks++; return {x:recent.x,y:recent.y}; }
+      }
+    }
+    return huntShot(shots, mem, rng);
   }
   function chooseShot(game, pid, rng){
     const p=game.players[pid]; const mem=game.ai;
