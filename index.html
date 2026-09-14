@@ -1290,8 +1290,9 @@ class Link {
     const t=err&&err.type;
     if(t==='unavailable-id'){
       this.idTries++;
-      if(this.idTries<8){ this.setState('connecting','id busy, retrying'); this.timers.rc=setTimeout(()=>this.openPeer(), 1500); }
-      else { this.setState('error','room id is held by another session'); this.emit('fatal','This room id is still held by another session. If you just refreshed, wait a moment and retry. Otherwise the room is full.'); }
+      if(this.idTries<5){ this.setState('connecting','id busy, retrying'); this.timers.rc=setTimeout(()=>this.openPeer(), 1500); }
+      else if(this.role==='guest'){ this.setState('error','room full'); this.emit('roomFull'); }
+      else { this.setState('error','room id is held by another session'); this.emit('fatal','This room id is still held by another session. If you just refreshed, wait a moment and retry.'); }
     } else if(t==='peer-unavailable'){
       // Guest arrived before host. Keep polling with backoff.
       this.connectTries++;
