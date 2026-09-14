@@ -1395,3 +1395,105 @@ const Store = (function(){
 })();
 
 /* ============================================================
+   SECTION 7 — AUDIO SYNTHESIS (Web Audio API, no files)
+   All sounds are built from oscillators, noise buffers, envelopes, filters and delay.
+   ============================================================ */
+const Sfx = (function(){
+  let ctx=null, master=null, noiseBuf=null, muted=false, volume=0.7, fireNode=null, ambientNode=null, voiceOn=false;
+  function ensure(){
+    if(ctx) return ctx;
+    const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return null;
+    try{ ctx=new AC(); }catch(e){ return null; }
+    master=ctx.createGain(); master.gain.value=muted?0:volume;
+    // a touch of reverb-ish depth via feedback delay
+    const delay=ctx.createDelay(0.5); delay.delayTime.value=0.11; const fb=ctx.createGain(); fb.gain.value=0.18; const wet=ctx.createGain(); wet.gain.value=0.25;
+    master.connect(ctx.destination); master.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(ctx.destination);
+    const len=ctx.sampleRate*2; noiseBuf=ctx.createBuffer(1,len,ctx.sampleRate); const d=noiseBuf.getChannelData(0); for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+    return ctx;
+  }
+  function unlock(){ const c=ensure(); if(c&&c.state==='suspended') c.resume().catch(()=>{}); }
+  function now(){ return ctx.currentTime; }
+  function gain(v,t){ const g=ctx.createGain(); g.gain.setValueAtTime(v,t||now()); return g; }
+  function noise(){ const s=ctx.createBufferSource(); s.buffer=noiseBuf; s.loop=true; return s; }
+  function osc(type,f){ const o=ctx.createOscillator(); o.type=type; o.frequency.value=f; return o; }
+  function filt(type,f,q){ const b=ctx.createBiquadFilter(); b.type=type; b.frequency.value=f; if(q) b.Q.value=q; return b; }
+  // envelope helper: attack, hold, release (seconds)
+  function adsr(g,t0,peak,a,h,r){ const p=g.gain; p.cancelScheduledValues(t0); p.setValueAtTime(0.0001,t0); p.exponentialRampToValueAtTime(Math.max(peak,0.0002),t0+a); p.setValueAtTime(Math.max(peak,0.0002),t0+a+h); p.exponentialRampToValueAtTime(0.0001,t0+a+h+r); }
+  function ready(){ if(!ensure()) return false; if(ctx.state==='suspended'){ ctx.resume().catch(()=>{}); } return true; }
+
+  function cannon(){
+    if(!ready()) return; const t=now();
+    const o=osc('sine',90); o.frequency.exponentialRampToValueAtTime(28,t+0.3); const g=gain(0,t); adsr(g,t,0.9,0.005,0.05,0.35); o.connect(g).connect(master); o.start(t); o.stop(t+0.5);
+    const n=noise(); const f=filt('lowpass',900,0.7); const ng=gain(0,t); adsr(ng,t,0.5,0.003,0.02,0.18); n.connect(f).connect(ng).connect(master); n.start(t); n.stop(t+0.3);
+  }
+  function whistle(durMs){
+    if(!ready()) return; const t=now(), d=Math.max(0.2,(durMs||700)/1000);
+    const o=osc('sine',1900); o.frequency.exponentialRampToValueAtTime(320,t+d); const v=osc('sine',9); const vg=gain(18,t); v.connect(vg).connect(o.frequency);
+    const g=gain(0,t); adsr(g,t,0.12,0.05,d-0.1,0.08); const f=filt('bandpass',1200,1.5); o.connect(f).connect(g).connect(master); o.start(t); v.start(t); o.stop(t+d+0.1); v.stop(t+d+0.1);
+  }
+  function splash(){
+    if(!ready()) return; const t=now();
+    const n=noise(); const f=filt('bandpass',1400,0.8); f.frequency.exponentialRampToValueAtTime(350,t+0.5); const g=gain(0,t); adsr(g,t,0.45,0.01,0.08,0.45); n.connect(f).connect(g).connect(master); n.start(t); n.stop(t+0.7);
+    for(let i=0;i<4;i++){ const bt=t+0.15+i*0.11+Math.random()*0.05; const b=osc('sine',380+Math.random()*500); b.frequency.exponentialRampToValueAtTime(900+Math.random()*600,bt+0.08); const bg=gain(0,bt); adsr(bg,bt,0.12,0.005,0.01,0.07); b.connect(bg).connect(master); b.start(bt); b.stop(bt+0.12); }
+  }
+  function explosion(big){
+    if(!ready()) return; const t=now(); const k=big?1.4:1;
+    const n=noise(); const f=filt('lowpass',2400,0.5); f.frequency.exponentialRampToValueAtTime(140,t+0.6*k); const g=gain(0,t); adsr(g,t,0.8,0.005,0.05,0.55*k); n.connect(f).connect(g).connect(master); n.start(t); n.stop(t+0.8*k);
+    const o=osc('sine',70); o.frequency.exponentialRampToValueAtTime(32,t+0.7*k); const og=gain(0,t); adsr(og,t,0.9,0.005,0.08,0.7*k); o.connect(og).connect(master); o.start(t); o.stop(t+0.9*k);
+    const c=noise(); const cf=filt('highpass',1800,0.7); const cg=gain(0,t+0.1); const p=cg.gain; p.setValueAtTime(0.0001,t+0.1); for(let i=0;i<14;i++){ const tt=t+0.12+i*0.06*k; p.setValueAtTime(0.02+Math.random()*0.16*(1-i/14),tt); p.setValueAtTime(0.002,tt+0.02); } p.exponentialRampToValueAtTime(0.0001,t+1.1*k); c.connect(cf).connect(cg).connect(master); c.start(t); c.stop(t+1.2*k);
+  }
+  function fireLoop(on){
+    if(!ready()) return;
+    if(on && !fireNode){ const n=noise(); const f=filt('bandpass',2600,1.2); const g=gain(0.0001,now()); const lfo=osc('square',11); const lg=gain(0.05,now()); lfo.connect(lg).connect(g.gain); g.gain.setTargetAtTime(0.07,now(),0.5); n.connect(f).connect(g).connect(master); n.start(); lfo.start(); fireNode={n,lfo,g}; }
+    else if(!on && fireNode){ const fn=fireNode; fireNode=null; fn.g.gain.setTargetAtTime(0.0001,now(),0.3); setTimeout(()=>{ try{ fn.n.stop(); fn.lfo.stop(); }catch(e){} },900); }
+  }
+  function klaxon(){
+    if(!ready()) return; const t=now();
+    for(let i=0;i<4;i++){ const tt=t+i*0.28; const o=osc('square',i%2?554:440); const f=filt('lowpass',1800); const g=gain(0,tt); adsr(g,tt,0.18,0.01,0.2,0.05); o.connect(f).connect(g).connect(master); o.start(tt); o.stop(tt+0.28); }
+  }
+  function engine(durMs, churn){
+    if(!ready()) return; const t=now(), d=Math.max(0.3,(durMs||600)/1000);
+    const o=osc('sawtooth',churn?38:46); const f=filt('lowpass',260,1.2); const g=gain(0,t); adsr(g,t,0.35,0.08,d-0.2,0.2); const lfo=osc('sine',churn?6:9); const lg=gain(0.18,t); lfo.connect(lg).connect(g.gain);
+    o.connect(f).connect(g).connect(master); o.start(t); lfo.start(t); o.stop(t+d+0.2); lfo.stop(t+d+0.2);
+    const n=noise(); const nf=filt('lowpass',420); const ng=gain(0,t); adsr(ng,t,0.12,0.1,d-0.2,0.2); n.connect(nf).connect(ng).connect(master); n.start(t); n.stop(t+d+0.2);
+  }
+  function sinking(){
+    if(!ready()) return; const t=now();
+    const o=osc('sawtooth',95); o.frequency.linearRampToValueAtTime(58,t+2.4); const v=osc('sine',2.5); const vg=gain(14,t); v.connect(vg).connect(o.frequency); const f=filt('lowpass',700,3); const g=gain(0,t); adsr(g,t,0.3,0.4,1.6,0.8); o.connect(f).connect(g).connect(master); o.start(t); v.start(t); o.stop(t+3); v.stop(t+3);
+    const n=noise(); const nf=filt('bandpass',420,2); const ng=gain(0,t+0.6); const p=ng.gain; p.setValueAtTime(0.0001,t+0.6); for(let i=0;i<24;i++){ const tt=t+0.6+i*0.1; p.linearRampToValueAtTime(0.03+Math.random()*0.16,tt); p.linearRampToValueAtTime(0.01,tt+0.05); } p.exponentialRampToValueAtTime(0.0001,t+3.4); n.connect(nf).connect(ng).connect(master); n.start(t); n.stop(t+3.5);
+    for(let i=0;i<10;i++){ const bt=t+1.0+i*0.22+Math.random()*0.1; const b=osc('sine',300+Math.random()*300); b.frequency.exponentialRampToValueAtTime(700+Math.random()*900,bt+0.12); const bg=gain(0,bt); adsr(bg,bt,0.08,0.005,0.02,0.1); b.connect(bg).connect(master); b.start(bt); b.stop(bt+0.16); }
+    const s=noise(); const sf=filt('bandpass',900,4); const sg=gain(0,t+0.3); const sp=sg.gain; sp.setValueAtTime(0.0001,t+0.3); for(let i=0;i<8;i++){ const tt=t+0.3+i*0.3+Math.random()*0.15; sf.frequency.setValueAtTime(700+Math.random()*700,tt); sp.linearRampToValueAtTime(0.02+Math.random()*0.04,tt+0.05); sp.linearRampToValueAtTime(0.0005,tt+0.22); } s.connect(sf).connect(sg).connect(master); s.start(t); s.stop(t+3.2);
+  }
+  function brass(freq,t,d,vol){ const o=osc('sawtooth',freq); const o2=osc('square',freq*1.003); const f=filt('lowpass',900,1.5); f.frequency.setValueAtTime(400,t); f.frequency.exponentialRampToValueAtTime(2200,t+0.08); f.frequency.exponentialRampToValueAtTime(900,t+d); const g=gain(0,t); adsr(g,t,vol||0.22,0.03,Math.max(0.01,d-0.12),0.12); const g2=gain(0.35,t); o.connect(f); o2.connect(g2).connect(f); f.connect(g).connect(master); o.start(t); o2.start(t); o.stop(t+d+0.2); o2.stop(t+d+0.2); }
+  function bugle(){
+    if(!ready()) return; let t=now()+0.05; const G4=392,C5=523.25,E5=659.25,G5=783.99;
+    const seq=[[G4,.18],[C5,.18],[E5,.18],[G5,.4],[E5,.18],[G5,.55],[0,.15],[C5,.18],[E5,.18],[G5,.18],[C5*2,.7]];
+    seq.forEach(n=>{ if(n[0]) brass(n[0],t,n[1]); t+=n[1]+0.04; });
+  }
+  function taps(){
+    if(!ready()) return; let t=now()+0.05; const G4=392,C5=523.25,E5=659.25;
+    const seq=[[G4,.35],[G4,.25],[C5,1.0],[0,.25],[G4,.35],[C5,.25],[E5,1.0],[0,.25],[G4,.3],[C5,.3],[E5,.3],[G4,.3],[C5,.3],[E5,.3],[G4,.3],[C5,.3],[E5,1.2]];
+    seq.forEach(n=>{ if(n[0]){ const o=osc('triangle',n[0]); const o2=osc('sine',n[0]/2); const f=filt('lowpass',1400); const g=gain(0,t); adsr(g,t,0.16,0.06,Math.max(0.01,n[1]-0.2),0.25); const g2=gain(0.4,t); o.connect(f); o2.connect(g2).connect(f); f.connect(g).connect(master); o.start(t); o2.start(t); o.stop(t+n[1]+0.4); o2.stop(t+n[1]+0.4); } t+=n[1]+0.05; });
+  }
+  function puff(){ if(!ready()) return; const t=now(); const n=noise(); const f=filt('lowpass',600,0.8); const g=gain(0,t); adsr(g,t,0.35,0.005,0.03,0.22); n.connect(f).connect(g).connect(master); n.start(t); n.stop(t+0.3); const o=osc('sine',120); o.frequency.exponentialRampToValueAtTime(50,t+0.2); const og=gain(0,t); adsr(og,t,0.3,0.005,0.02,0.18); o.connect(og).connect(master); o.start(t); o.stop(t+0.25); }
+  function click(){ if(!ready()) return; const t=now(); const o=osc('square',1800); const g=gain(0,t); adsr(g,t,0.08,0.002,0.01,0.03); o.connect(g).connect(master); o.start(t); o.stop(t+0.06); }
+  function confirm(){ if(!ready()) return; const t=now(); [[660,0],[990,0.09]].forEach(n=>{ const o=osc('triangle',n[0]); const g=gain(0,t+n[1]); adsr(g,t+n[1],0.14,0.005,0.05,0.12); o.connect(g).connect(master); o.start(t+n[1]); o.stop(t+n[1]+0.25); }); }
+  function buzz(){ if(!ready()) return; const t=now(); const o=osc('square',110); const o2=osc('square',113); const f=filt('lowpass',900); const g=gain(0,t); adsr(g,t,0.18,0.005,0.16,0.05); o.connect(f); o2.connect(f); f.connect(g).connect(master); o.start(t); o2.start(t); o.stop(t+0.25); o2.stop(t+0.25); }
+  function chime(){ if(!ready()) return; const t=now(); [[659,0],[784,0.12],[1047,0.24]].forEach(n=>{ const o=osc('sine',n[0]); const g=gain(0,t+n[1]); adsr(g,t+n[1],0.12,0.005,0.08,0.35); o.connect(g).connect(master); o.start(t+n[1]); o.stop(t+n[1]+0.5); }); }
+  function ambient(on){
+    if(!ready()) return;
+    if(on && !ambientNode){ const n=noise(); const f=filt('lowpass',380,0.6); const g=gain(0.0001,now()); const lfo=osc('sine',0.11); const lg=gain(0.03,now()); lfo.connect(lg).connect(g.gain); g.gain.setTargetAtTime(0.05,now(),1.5); n.connect(f).connect(g).connect(master); n.start(); lfo.start(); ambientNode={n,lfo,g}; }
+    else if(!on && ambientNode){ const a=ambientNode; ambientNode=null; a.g.gain.setTargetAtTime(0.0001,now(),0.8); setTimeout(()=>{ try{ a.n.stop(); a.lfo.stop(); }catch(e){} },2500); }
+  }
+  function setVolume(v){ volume=Math.max(0,Math.min(1,v)); if(master) master.gain.setTargetAtTime(muted?0:volume,ctx.currentTime,0.02); }
+  function setMute(m){ muted=!!m; if(master) master.gain.setTargetAtTime(muted?0:volume,ctx.currentTime,0.02); }
+  function setVoice(v){ voiceOn=!!v; if(!v && typeof speechSynthesis!=='undefined') try{ speechSynthesis.cancel(); }catch(e){} }
+  function speak(text, navyId){
+    if(!voiceOn||muted||typeof speechSynthesis==='undefined'||!text) return;
+    try{ const u=new SpeechSynthesisUtterance(text.replace(/[{}]/g,'')); const n=navy(navyId); u.lang='en-US'; u.pitch=n.voice.pitch; u.rate=n.voice.rate; u.volume=volume; speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(e){}
+  }
+  function applySettings(s){ setVolume(s.volume); setMute(s.mute); setVoice(s.voice); if(ctx) ambient(!!s.ambient); }
+  return { ensure, unlock, cannon, whistle, splash, explosion, puff, fireLoop, klaxon, engine, sinking, bugle, taps, click, confirm, buzz, chime, ambient, setVolume, setMute, setVoice, speak, applySettings, get context(){ return ctx; } };
+})();
+
+/* ============================================================
