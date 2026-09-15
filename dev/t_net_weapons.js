@@ -4,7 +4,7 @@ const P=(x,y)=>({x,y});
 async function st(b){ return b.eval(`(()=>{const S=Underway.UI.S; const r=S.role; const o=r==='host'?'guest':'host'; return {cur:S.game.current, phase:S.game.phase, turn:S.game.turn, busy:S.busy, pending:!!S.pendingFire, link:S.linkState, myShots:S.game.players[r].shots.length, theirShots:S.game.players[o].shots.length, mySightings:S.game.players[r].sightings.length, winner:S.game.winner};})()`); }
 async function cellsOf(b,idx){ return b.eval(`(()=>{const S=Underway.UI.S; return Underway.Rules.shipCells(S.game.players[S.role].fleet[${idx}]);})()`); }
 async function shipOf(b,idx){ return b.eval(`(()=>{const S=Underway.UI.S; return S.game.players[S.role].fleet[${idx}];})()`); }
-async function pickWeapon(b,id){ const i=['shell','mg','mine','radar','airstrike'].indexOf(id)+1; await b.click(`.weapons button:nth-child(${i})`); await b.wait(80); }
+async function pickWeapon(b,id){ const i=['shell','mg','torpedo','mine','radar','airstrike'].indexOf(id)+1; await b.click(`.weapons button:nth-child(${i})`); await b.wait(80); }
 async function tapEnemy(b,cell){ const xy=await cellXY(b,'enemy',cell); await b.clickCanvas('#enemyCanvas',xy.x,xy.y); await b.wait(60); }
 async function settleBoth(att, def){ for(let i=0;i<120;i++){ const a=await st(att), d=await st(def); if(!a.busy&&!a.pending&&!d.busy&&a.turn===d.turn&&a.cur===d.cur) return [a,d]; await att.wait(200); if(i%3===2){ await att.eval(`Underway.Anim.skip()`); await def.eval(`Underway.Anim.skip()`); } } throw new Error('did not settle'); }
 (async()=>{
@@ -40,6 +40,12 @@ async function settleBoth(att, def){ for(let i=0;i<120;i++){ const a=await st(at
   console.log('after refresh weapons state kept:', await att.eval(`JSON.stringify(Underway.UI.S.game.players[Underway.UI.S.role].weapons)`));
   const obb=await cellsOf(def,1); const obs=await shipOf(def,1); const horiz=(obs.heading==='E'||obs.heading==='W'); await pickWeapon(att,'airstrike'); if(horiz!==await att.eval(`Underway.UI.S.airDir`)) await att.click('#btn-airdir'); const anchor=obb.slice().sort((p,q)=>p.x-q.x||p.y-q.y)[0]; await tapEnemy(att,anchor); await att.click('#btn-fire'); [a,d]=await settleBoth(att,def);
   console.log('AIRSTRIKE: results', await att.eval(`JSON.stringify(Underway.UI.S.game.players[Underway.UI.S.role].shots.filter(x=>x.weapon==='airstrike').map(x=>x.result))`), '| def battleship hits:', JSON.stringify((await shipOf(def,1)).hits), '| def sightings', d.mySightings, '| turn', a.turn, a.cur, void isHost);
+  swap();
+  // 5) torpedo from the other side along the defender's destroyer row (from the west)
+  const td=await cellsOf(def,2); await pickWeapon(att,'torpedo'); let mode=await att.eval(`document.getElementById('btn-torpdir').textContent`); while(!/→ row/.test(mode)){ await att.click('#btn-torpdir'); mode=await att.eval(`document.getElementById('btn-torpdir').textContent`); }
+  await tapEnemy(att,P(0,td[0].y)); await att.click('#btn-fire'); [a,d]=await settleBoth(att,def);
+  console.log('TORPEDO: att result', await att.eval(`JSON.stringify(Underway.UI.S.game.players[Underway.UI.S.role].shots.filter(x=>x.weapon==='torpedo').map(x=>x.result+':'+(x.cls||'')+'@'+x.cell.x+','+x.cell.y))`), '| def wake recorded', await def.eval(`Underway.UI.S.game.players[Underway.UI.S.role].torpedoes.length`), '| def sightings unchanged', d.mySightings, '| turn', a.turn, a.cur);
+  await def.shot(__dirname+'/n_wake_def.png');
   console.log('HOST ERRORS:', H.errors.length?H.errors:'none'); console.log('GUEST ERRORS:', G.errors.length?G.errors:'none'); console.log('warns:', H.logs.concat(G.logs).filter(l=>/warn/.test(l)).slice(0,6));
   H.close(); G.close(); try{ srv.kill('SIGKILL'); }catch(e){} setTimeout(()=>process.exit(0),300);
 })().catch(e=>{ console.error('HARNESS', e); process.exit(1); });
