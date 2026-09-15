@@ -247,9 +247,9 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
       <h3 style="margin-top:16px">Solo &amp; local</h3>
       <div class="row" style="margin-bottom:8px">
         <span class="sub">AI level</span>
-        <button class="small ailvl" data-level="random">Random</button>
-        <button class="small ailvl selected" data-level="hunter">Hunter</button>
-        <button class="small ailvl" data-level="admiral">Admiral</button>
+        <button class="small ailvl" data-level="random" title="Random legal shots. Never moves its ships.">Random · static</button>
+        <button class="small ailvl" data-level="hunter" title="Checkerboard hunt, then brackets hits. Never moves its ships.">Hunter · static</button>
+        <button class="small ailvl selected" data-level="admiral" title="Hunter plus movement: re-fires to confirm, moves damaged ships, rotates out of brackets.">Admiral · maneuvers</button>
       </div>
       <div class="grid2">
         <button id="btn-ai">Versus AI</button>
