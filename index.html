@@ -3490,17 +3490,19 @@ const Tests = (function(){
     g=Rules.fire(g,'guest',P(9,9)).game; r=Rules.layMine(g,'host',P(4,4)); ok(!r.ok,'same cell refused'); r=Rules.layMine(g,'host',P(6,6)); ok(r.ok); g=r.game; g=Rules.fire(g,'guest',P(9,9)).game;
     r=Rules.layMine(g,'host',P(7,7)); ok(!r.ok); ok(/left/.test(r.reason),r.reason);
   });
-  test('mines: dormant under a ship, detonate when a section enters the cell (standard hit, crippling rules apply)', ()=>{
+  test('mines: laid on an enemy section they detonate at once; on empty water they wait for a section to enter', ()=>{
     let g=localGame(34); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]);
-    g=Rules.layMine(g,'host',P(5,6)).game;                 // under the destroyer's mid section: dormant
-    eq(g.players.host.shots.length,0);
-    let r=Rules.maneuver(g,'guest',2,'advance'); ok(r.ok,r.reason); // sections shift north: 5,4 5,5 5,6 -> stern enters 5,6? no: 5,6 was mid, now stern... cells become 5,4 5,5 5,6; entered = 5,4 only
-    eq(r.mineHits.length,0,'no section entered the mined cell'); g=r.game;
-    g=Rules.fire(g,'guest',P(9,9)).game; g=Rules.layMine(g,'host',P(5,3)).game;   // ahead of the bow
+    let m=Rules.layMine(g,'host',P(5,6)); ok(m.ok,m.reason); ok(m.immediate,'mine on the mid section detonates immediately'); eq(m.immediate.result,'hit'); eq(m.immediate.cls,'destroyer'); ok(!m.mine.live,'spent');
+    g=m.game; eq(g.players.host.shots.length,1); ok(g.players.guest.fleet[2].hits[1],'mid section damaged'); eq(g.current,'guest','turn still passes');
+    let r=Rules.maneuver(g,'guest',2,'advance'); ok(r.ok,r.reason); eq(r.mineHits.length,0); g=r.game;  // destroyer now 5,4 5,5 5,6 (one hit: still mobile)
+    g=Rules.fire(g,'guest',P(9,9)).game; m=Rules.layMine(g,'host',P(5,3)); ok(m.ok); ok(!m.immediate,'empty water: dormant'); g=m.game;   // ahead of the bow
     r=Rules.maneuver(g,'guest',2,'advance'); ok(r.ok); eq(r.mineHits.length,1); const hit=r.mineHits[0];
-    eq(hit.weapon,'mine'); eq(hit.result,'hit'); eq(hit.cls,'destroyer'); eq(hit.player,'host'); eq(hit.cell,P(5,3));
-    ok(r.game.players.guest.fleet[2].hits[0],'bow section damaged'); ok(!r.game.players.host.mines.find(m=>m.cell.x===5&&m.cell.y===3).live,'mine spent');
-    eq(r.game.phase,'fire','mover still gets to fire after an advance'); eq(r.game.players.host.shots.length,1,'mine hit appears in the owner\'s tracking shots');
+    eq(hit.weapon,'mine'); eq(hit.result,'hit'); eq(hit.cls,'destroyer'); eq(hit.player,'host'); eq(hit.cell,P(5,3)); ok(hit.crippled,'second hit reaches the destroyer threshold');
+    ok(r.game.players.guest.fleet[2].hits[0],'bow section damaged'); ok(!r.game.players.host.mines.find(x=>x.cell.x===5&&x.cell.y===3).live,'mine spent');
+    eq(r.game.phase,'fire','mover still gets to fire after an advance'); eq(r.game.players.host.shots.length,2,'both mine hits appear in the owner\'s tracking shots');
+    let g2=localGame(53); g2.players.guest.fleet=fleetWith([{cls:'patrol',x:2,y:3,h:'W'}]); g2.players.guest.fleet=hitShip(g2.players.guest.fleet,'patrol',[0]).fleet;
+    const c=Rules.layMine(g2,'host',P(2,3)); ok(c.ok); eq(c.immediate.result,'confirmed','already-burning section: confirmed, mine spent'); ok(!c.mine.live);
+    let g3=localGame(54); g3.players.guest.fleet=fleetWith([{cls:'patrol',x:2,y:3,h:'W'}]); g3.players.guest.fleet=hitShip(g3.players.guest.fleet,'patrol',[0]).fleet; const k=Rules.layMine(g3,'host',P(3,3)); eq(k.immediate.result,'sunk','mine on the last section sinks it');
   });
   test('mines: a rotation can sweep onto a mine; a stern entering a mine cripples', ()=>{
     let g=localGame(35); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]);
@@ -3521,7 +3523,7 @@ const Tests = (function(){
     r=Rules.maneuver(g,'guest',4,'reverse'); ok(r.ok,r.reason); eq(r.mineHits[0].result,'sunk'); eq(r.game.winner,'host'); ok(r.ended);
   });
   test('mines: remote mine-hit report applied on the owner\'s device', ()=>{
-    let g=localGame(38); g=Rules.layMine(g,'host',P(5,3)).game; let a=Rules.clone(g); a.players.guest.fleet=null;
+    let g=localGame(38); g.players.guest.fleet=fleetWith([]); g=Rules.layMine(g,'host',P(5,3)).game; let a=Rules.clone(g); a.players.guest.fleet=null;
     const r=Rules.applyRemoteMineHit(a,'host',{mineId:g.players.host.mines[0].id, cell:P(5,3), result:'hit', cls:'destroyer', crippled:false, crippledBy:null, footprint:null, turn:2});
     ok(r.ok,r.reason); eq(r.game.players.host.shots[0].weapon,'mine'); ok(!r.game.players.host.mines[0].live); const again=Rules.applyRemoteMineHit(r.game,'host',{mineId:g.players.host.mines[0].id, cell:P(5,3), result:'hit', cls:'destroyer'}); ok(!again.ok,'a mine fires once');
   });
