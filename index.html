@@ -1097,8 +1097,8 @@ const Rules = (function(){
     opts=opts||{}; const err=actionGuard(game,pid,'torpedo'); if(err) return {ok:false, reason:err, game};
     if(!validLane(opts.lane)) return {ok:false, reason:'Choose a row or column and a direction', game};
     const ap=game.players[pid];
-    if(!opts.override){
-      const sub=ap.fleet&&ap.fleet[SUB_IDX]; if(!sub||!sub.bow||sub.sunk) return {ok:false, reason:'No Submarine afloat', game};
+    if(ap.fleet){ // the firing fleet is local (own device, AI or hotseat); a defender resolving a remote torpedo trusts the sender
+      const sub=ap.fleet[SUB_IDX]; if(!sub||!sub.bow||sub.sunk) return {ok:false, reason:'No Submarine afloat', game};
       if(hitCount(sub)>0) return {ok:false, reason:'Torpedoes need an undamaged Submarine', game};
       if(game.maneuvered && game.maneuveredShip===SUB_IDX) return {ok:false, reason:'The Submarine cannot fire on a turn it moved', game};
     }
