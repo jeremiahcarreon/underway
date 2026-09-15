@@ -3371,7 +3371,7 @@ const Tests = (function(){
   test('cell notation round trip', ()=>{ eq(cellName(P(2,6)),'C7'); eq(parseCell('c7'),P(2,6)); eq(parseCell('J10'),P(9,9)); eq(parseCell('K1'),null); });
 
   /* --- weapons --- */
-  test('weapons: every player starts with shell, MG, 2 mines, radar, 1 air strike', ()=>{ const p=Rules.createPlayer('host'); eq(p.weapons.map(w=>w.id),['shell','mg','mine','radar','airstrike']); eq(p.weapons.find(w=>w.id==='mine').usesRemaining,2); eq(p.weapons.find(w=>w.id==='airstrike').usesRemaining,1); });
+  test('weapons: every player starts with shell, MG, torpedo, 2 mines, radar, 1 air strike', ()=>{ const p=Rules.createPlayer('host'); eq(p.weapons.map(w=>w.id),['shell','mg','torpedo','mine','radar','airstrike']); eq(p.weapons.find(w=>w.id==='mine').usesRemaining,2); eq(p.weapons.find(w=>w.id==='airstrike').usesRemaining,1); });
   test('machine gun: two bullets on one ship = one section of damage; a single bullet only grazes', ()=>{
     const f=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'},{cls:'patrol',x:2,y:3,h:'W'}]);
     const r=Rules.resolveMG(f,[P(5,5),P(5,6),P(2,3),P(9,9)],1);
@@ -3460,6 +3460,33 @@ const Tests = (function(){
     g=r.game; g=Rules.fire(g,'guest',P(9,9)).game; const again=Rules.airstrike(g,'host',{cells:Rules.lineCells(P(0,0),true)}); ok(!again.ok); ok(/left/.test(again.reason),again.reason);
     let g2=localGame(43); g2.players.host.fleet=hitShip(g2.players.host.fleet,'carrier',[2]).fleet; ok(!Rules.airstrike(g2,'host',{cells:Rules.lineCells(P(0,0),true)}).ok);
     eq(Rules.lineCells(P(9,9),true),[P(7,9),P(8,9),P(9,9)],'clamped to the board');
+  });
+  test('torpedo: runs the lane from the chosen edge, first section reached takes the hit, nothing behind it', ()=>{
+    const f=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'},{cls:'patrol',x:2,y:5,h:'W'}]); // row 5 holds patrol at 2,5 3,5 and destroyer at 5,5
+    const east=Rules.resolveTorpedo(f,{axis:'row',index:5,dir:1},1); eq(east.result,'hit'); eq(east.cls,'patrol'); eq(east.cell,P(2,5)); eq(east.stopIndex,2); eq(Rules.hitCount(east.fleet[2]),0,'destroyer behind untouched');
+    const west=Rules.resolveTorpedo(f,{axis:'row',index:5,dir:-1},1); eq(west.cls,'destroyer'); eq(west.cell,P(5,5));
+    const col=Rules.resolveTorpedo(f,{axis:'col',index:5,dir:-1},1); eq(col.cls,'destroyer'); eq(col.cell,P(5,7),'from the south the stern is reached first'); ok(col.crippled,'stern hit cripples');
+    const clear=Rules.resolveTorpedo(f,{axis:'row',index:2,dir:1},1); eq(clear.result,'miss'); eq(clear.stopIndex,9);
+    eq(Rules.torpedoPath({axis:'col',index:3,dir:1})[0],P(3,0)); ok(!Rules.validLane({axis:'diag',index:1,dir:1}));
+  });
+  test('torpedo: wrecks and already-hit sections stop it with CONFIRMED (no damage behind)', ()=>{
+    let f=fleetWith([{cls:'patrol',x:2,y:5,h:'W'},{cls:'destroyer',x:5,y:5,h:'N'}]); f=hitShip(f,'patrol',[0,1]).fleet; ok(f[4].sunk);
+    const r=Rules.resolveTorpedo(f,{axis:'row',index:5,dir:1},2); eq(r.result,'confirmed'); eq(r.cls,'patrol'); eq(Rules.hitCount(r.fleet[2]),0);
+  });
+  test('torpedo: needs an undamaged Submarine that did not move this turn; 8-turn reload; defender records the wake', ()=>{
+    let g=localGame(48); g.players.host.fleet=fleetWith([{cls:'submarine',x:5,y:2,h:'N'}]); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]);
+    let r=Rules.torpedo(g,'host',{lane:{axis:'row',index:5,dir:1}}); ok(r.ok,r.reason); eq(r.shot.weapon,'torpedo'); eq(r.shot.result,'hit'); eq(r.shot.cls,'destroyer'); eq(r.shot.cell,P(5,5));
+    eq(r.game.players.guest.torpedoes.length,1); eq(r.game.players.guest.torpedoes[0].lane.axis,'row'); eq(r.game.players.host.sightings.length,0); eq(r.game.players.guest.sightings.length,0,'silent: no sighting of the sub');
+    eq(Rules.weapon(r.game.players.host,'torpedo').cooldown,8); eq(r.game.current,'guest');
+    let g2=localGame(49); g2.players.host.fleet=fleetWith([{cls:'submarine',x:5,y:2,h:'N'}]); const mv=Rules.maneuver(g2,'host',Rules.SUB_IDX,'advance'); ok(mv.ok,mv.reason); const bad=Rules.torpedo(mv.game,'host',{lane:{axis:'row',index:5,dir:1}}); ok(!bad.ok); ok(/moved/.test(bad.reason),bad.reason);
+    const other=Rules.maneuver(g2,'host',0,'advance'); if(other.ok){ const fine=Rules.torpedo(other.game,'host',{lane:{axis:'row',index:5,dir:1}}); ok(fine.ok,'moving another ship does not block the torpedo'); }
+    let g3=localGame(50); g3.players.host.fleet=hitShip(g3.players.host.fleet,'submarine',[1]).fleet; ok(!Rules.torpedo(g3,'host',{lane:{axis:'row',index:0,dir:1}}).ok);
+  });
+  test('torpedo: remote result applied by the attacker matches the defender', ()=>{
+    let g=localGame(51); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]); const lane={axis:'col',index:5,dir:1};
+    const local=Rules.torpedo(g,'host',{lane}); ok(local.ok,local.reason);
+    let a=Rules.clone(g); a.players.guest.fleet=null; const remote=Rules.torpedo(a,'host',{lane, override:{result:local.shot.result, cls:local.shot.cls, crippled:local.shot.crippled, crippledBy:local.shot.crippledBy, footprint:local.shot.footprint, cell:local.shot.cell, stopIndex:local.shot.stopIndex}});
+    ok(remote.ok,remote.reason); eq(remote.game.players.host.shots[0].cell, local.game.players.host.shots[0].cell); eq(remote.game.players.host.shots[0].result,'hit');
   });
   test('peg map: repeat shots keep a per-cell history count; grazes go stale after a sinking elsewhere', ()=>{
     const shots=[{turn:1,cell:P(2,2),result:'miss'},{turn:3,cell:P(2,2),result:'miss'},{turn:5,cell:P(2,2),result:'hit',cls:'submarine'},{turn:7,cell:P(4,4),result:'graze',cls:'patrol'},{turn:9,cell:P(8,8),result:'sunk',cls:'patrol',footprint:[P(8,8),P(9,8)]}];
