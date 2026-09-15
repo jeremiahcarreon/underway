@@ -1,5 +1,5 @@
 const {Browser,cellXY,waitFor,selectShip,URL}=require('./cdp.js'); const PEER='?peer=localhost:9789';
-process.on('exit',()=>{ try{ require('child_process').execSync("pkill -f 'peerjs --port 9789' || true"); }catch(e){} });
+const srv=require('child_process').spawn(__dirname+'/peerserver/node_modules/.bin/peerjs',['--port','9789','--path','/'],{stdio:'ignore'}); process.on('exit',()=>{ try{ srv.kill('SIGKILL'); }catch(e){} });
 const P=(x,y)=>({x,y});
 async function st(b){ return b.eval(`(()=>{const S=Underway.UI.S; const r=S.role; const o=r==='host'?'guest':'host'; return {cur:S.game.current, phase:S.game.phase, turn:S.game.turn, busy:S.busy, pending:!!S.pendingFire, link:S.linkState, myShots:S.game.players[r].shots.length, theirShots:S.game.players[o].shots.length, mySightings:S.game.players[r].sightings.length, winner:S.game.winner};})()`); }
 async function cellsOf(b,idx){ return b.eval(`(()=>{const S=Underway.UI.S; return Underway.Rules.shipCells(S.game.players[S.role].fleet[${idx}]);})()`); }
@@ -8,6 +8,7 @@ async function pickWeapon(b,id){ const i=['shell','mg','mine','radar','airstrike
 async function tapEnemy(b,cell){ const xy=await cellXY(b,'enemy',cell); await b.clickCanvas('#enemyCanvas',xy.x,xy.y); await b.wait(60); }
 async function settleBoth(att, def){ for(let i=0;i<120;i++){ const a=await st(att), d=await st(def); if(!a.busy&&!a.pending&&!d.busy&&a.turn===d.turn&&a.cur===d.cur) return [a,d]; await att.wait(200); if(i%3===2){ await att.eval(`Underway.Anim.skip()`); await def.eval(`Underway.Anim.skip()`); } } throw new Error('did not settle'); }
 (async()=>{
+  await new Promise(r=>setTimeout(r,1500));
   const H=new Browser({}), G=new Browser({}); await H.launch(); await G.launch();
   await H.goto(URL+PEER); await H.eval(`document.getElementById('home-name').value='Hosty'`); await H.click('#btn-create'); await H.wait(300); const code=await H.eval(`Underway.UI.S.room`);
   await G.goto(URL+'?room='+code+'&peer=localhost:9789'); await G.eval(`document.getElementById('home-name').value='Guesty'`); await G.click('#btn-join');
