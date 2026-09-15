@@ -3415,6 +3415,12 @@ const Tests = (function(){
     let g2=localGame(40); g2.players.host.fleet=hitShip(g2.players.host.fleet,'carrier',[1]).fleet; const bad=Rules.radar(g2,'host',{shipIdx:0, anchor:P(0,0)}); ok(!bad.ok); ok(/undamaged/.test(bad.reason));
     const small=Rules.radar(localGame(41),'host',{shipIdx:4, anchor:P(9,9)}); ok(small.ok); eq(small.area.size,2);
   });
+  test('radar and air strike accept remote ship geometry (no hits array) on the defender\'s device', ()=>{
+    let g=localGame(45); g.players.host.fleet=null; // we are the guest; the host's fleet is unknown
+    const r=Rules.radar(g,'host',{ship:{cls:'destroyer',bow:P(5,5),heading:'N'}, anchor:P(0,0)}); ok(r.ok,r.reason); eq(r.area.size,3); eq(r.game.players.guest.sightings[0].cells.length,3);
+    let g2=localGame(46); g2.players.host.fleet=null; const a=Rules.airstrike(g2,'host',{ship:{cls:'carrier',bow:P(2,2),heading:'S'}, cells:Rules.lineCells(P(0,0),true)}); ok(a.ok,a.reason); eq(a.results.length,3);
+    let g3=localGame(47); g3.players.host.fleet=null; const m=Rules.fireMG(g3,'host',{ship:{cls:'patrol',bow:P(1,1),heading:'W'}, cells:[P(0,0),P(1,0),P(2,0),P(3,0)]}); ok(m.ok,m.reason);
+  });
   test('air strike: three cells in a line, each a full shot, undamaged carrier, once per game', ()=>{
     let g=localGame(42); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]);
     ok(!Rules.airstrike(g,'host',{cells:[P(5,5),P(5,6),P(6,7)]}).ok,'not a line');
