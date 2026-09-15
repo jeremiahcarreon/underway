@@ -3532,24 +3532,24 @@ const Tests = (function(){
     eq(Rules.lineCells(P(9,9),true),[P(7,9),P(8,9),P(9,9)],'clamped to the board');
   });
   test('torpedo: runs the lane from the chosen edge, first section reached takes the hit, nothing behind it', ()=>{
-    const f=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'},{cls:'patrol',x:2,y:5,h:'W'}]); // row 5 holds patrol at 2,5 3,5 and destroyer at 5,5
-    const east=Rules.resolveTorpedo(f,{axis:'row',index:5,dir:1},1); eq(east.result,'hit'); eq(east.cls,'patrol'); eq(east.cell,P(2,5)); eq(east.stopIndex,2); eq(Rules.hitCount(east.fleet[2]),0,'destroyer behind untouched');
-    const west=Rules.resolveTorpedo(f,{axis:'row',index:5,dir:-1},1); eq(west.cls,'destroyer'); eq(west.cell,P(5,5));
-    const col=Rules.resolveTorpedo(f,{axis:'col',index:5,dir:-1},1); eq(col.cls,'destroyer'); eq(col.cell,P(5,7),'from the south the stern is reached first'); ok(col.crippled,'stern hit cripples');
-    const clear=Rules.resolveTorpedo(f,{axis:'row',index:2,dir:1},1); eq(clear.result,'miss'); eq(clear.stopIndex,9);
+    const f=fleetWith([{cls:'destroyer',x:5,y:3,h:'N'},{cls:'patrol',x:2,y:3,h:'W'}]); // row 3 holds patrol at 2,3 3,3 and the destroyer bow at 5,3
+    const east=Rules.resolveTorpedo(f,{axis:'row',index:3,dir:1},1); eq(east.result,'hit'); eq(east.cls,'patrol'); eq(east.cell,P(2,3)); eq(east.stopIndex,2); eq(Rules.hitCount(east.fleet[2]),0,'destroyer behind untouched');
+    const south=Rules.resolveTorpedo(f,{axis:'col',index:5,dir:1},1); eq(south.cls,'destroyer'); eq(south.cell,P(5,3)); ok(!south.crippled);
+    const north=Rules.resolveTorpedo(f,{axis:'col',index:5,dir:-1},1); eq(north.cls,'destroyer'); eq(north.cell,P(5,5),'from the south the stern is reached first'); ok(north.crippled,'stern hit cripples');
+    const clear=Rules.resolveTorpedo(f,{axis:'row',index:8,dir:1},1); eq(clear.result,'miss'); eq(clear.stopIndex,9);
     eq(Rules.torpedoPath({axis:'col',index:3,dir:1})[0],P(3,0)); ok(!Rules.validLane({axis:'diag',index:1,dir:1}));
   });
   test('torpedo: wrecks and already-hit sections stop it with CONFIRMED (no damage behind)', ()=>{
-    let f=fleetWith([{cls:'patrol',x:2,y:5,h:'W'},{cls:'destroyer',x:5,y:5,h:'N'}]); f=hitShip(f,'patrol',[0,1]).fleet; ok(f[4].sunk);
-    const r=Rules.resolveTorpedo(f,{axis:'row',index:5,dir:1},2); eq(r.result,'confirmed'); eq(r.cls,'patrol'); eq(Rules.hitCount(r.fleet[2]),0);
+    let f=fleetWith([{cls:'patrol',x:2,y:3,h:'W'},{cls:'destroyer',x:5,y:3,h:'N'}]); f=hitShip(f,'patrol',[0,1]).fleet; ok(f[4].sunk);
+    const r=Rules.resolveTorpedo(f,{axis:'row',index:3,dir:1},2); eq(r.result,'confirmed'); eq(r.cls,'patrol'); eq(Rules.hitCount(r.fleet[2]),0);
   });
   test('torpedo: needs an undamaged Submarine that did not move this turn; 8-turn reload; defender records the wake', ()=>{
-    let g=localGame(48); g.players.host.fleet=fleetWith([{cls:'submarine',x:5,y:2,h:'N'}]); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]);
-    let r=Rules.torpedo(g,'host',{lane:{axis:'row',index:5,dir:1}}); ok(r.ok,r.reason); eq(r.shot.weapon,'torpedo'); eq(r.shot.result,'hit'); eq(r.shot.cls,'destroyer'); eq(r.shot.cell,P(5,5));
+    let g=localGame(48); g.players.host.fleet=fleetWith([{cls:'submarine',x:5,y:2,h:'N'}]); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:3,h:'N'}]);
+    let r=Rules.torpedo(g,'host',{lane:{axis:'row',index:3,dir:1}}); ok(r.ok,r.reason); eq(r.shot.weapon,'torpedo'); eq(r.shot.result,'hit'); eq(r.shot.cls,'destroyer'); eq(r.shot.cell,P(5,3));
     eq(r.game.players.guest.torpedoes.length,1); eq(r.game.players.guest.torpedoes[0].lane.axis,'row'); eq(r.game.players.host.sightings.length,0); eq(r.game.players.guest.sightings.length,0,'silent: no sighting of the sub');
     eq(Rules.weapon(r.game.players.host,'torpedo').cooldown,8); eq(r.game.current,'guest');
-    let g2=localGame(49); g2.players.host.fleet=fleetWith([{cls:'submarine',x:5,y:2,h:'N'}]); const mv=Rules.maneuver(g2,'host',Rules.SUB_IDX,'advance'); ok(mv.ok,mv.reason); const bad=Rules.torpedo(mv.game,'host',{lane:{axis:'row',index:5,dir:1}}); ok(!bad.ok); ok(/moved/.test(bad.reason),bad.reason);
-    const other=Rules.maneuver(g2,'host',0,'advance'); if(other.ok){ const fine=Rules.torpedo(other.game,'host',{lane:{axis:'row',index:5,dir:1}}); ok(fine.ok,'moving another ship does not block the torpedo'); }
+    let g2=localGame(49); g2.players.host.fleet=fleetWith([{cls:'submarine',x:5,y:2,h:'N'}]); const mv=Rules.maneuver(g2,'host',Rules.SUB_IDX,'advance'); ok(mv.ok,mv.reason); const bad=Rules.torpedo(mv.game,'host',{lane:{axis:'row',index:8,dir:1}}); ok(!bad.ok); ok(/moved/.test(bad.reason),bad.reason);
+    const other=Rules.maneuver(g2,'host',4,'reverse'); ok(other.ok,other.reason); const fine=Rules.torpedo(other.game,'host',{lane:{axis:'row',index:8,dir:1}}); ok(fine.ok,'moving another ship does not block the torpedo: '+fine.reason);
     let g3=localGame(50); g3.players.host.fleet=hitShip(g3.players.host.fleet,'submarine',[1]).fleet; ok(!Rules.torpedo(g3,'host',{lane:{axis:'row',index:0,dir:1}}).ok);
   });
   test('torpedo: remote result applied by the attacker matches the defender', ()=>{
