@@ -8,11 +8,11 @@ async function pickWeapon(b,id){ const i=['shell','mg','mine','radar','airstrike
 async function tapEnemy(b,cell){ const xy=await cellXY(b,'enemy',cell); await b.clickCanvas('#enemyCanvas',xy.x,xy.y); await b.wait(60); }
 async function settleBoth(att, def){ for(let i=0;i<120;i++){ const a=await st(att), d=await st(def); if(!a.busy&&!a.pending&&!d.busy&&a.turn===d.turn&&a.cur===d.cur) return [a,d]; await att.wait(200); if(i%3===2){ await att.eval(`Underway.Anim.skip()`); await def.eval(`Underway.Anim.skip()`); } } throw new Error('did not settle'); }
 (async()=>{
-  await new Promise(r=>setTimeout(r,1500));
-  const H=new Browser({}), G=new Browser({}); await H.launch(); await G.launch();
+  await new Promise(r=>setTimeout(r,1500)); console.log('booting');
+  const H=new Browser({}), G=new Browser({}); await H.launch(); await G.launch(); console.log('browsers up');
   await H.goto(URL+PEER); await H.eval(`document.getElementById('home-name').value='Hosty'`); await H.click('#btn-create'); await H.wait(300); const code=await H.eval(`Underway.UI.S.room`);
   await G.goto(URL+'?room='+code+'&peer=localhost:9789'); await G.eval(`document.getElementById('home-name').value='Guesty'`); await G.click('#btn-join');
-  await waitFor(G, `Underway.UI.S.linkState==='online'`, 30000); await waitFor(H, `Underway.UI.S.linkState==='online'`, 30000);
+  console.log('room', code); await waitFor(G, `Underway.UI.S.linkState==='online'`, 30000); await waitFor(H, `Underway.UI.S.linkState==='online'`, 30000); console.log('online');
   await H.click('.navybtn:nth-child(3)'); await G.wait(300); await G.click('#btn-navy-random'); await H.wait(500); await H.click('#btn-lobby-start'); await waitFor(G, `Underway.UI.S.screen==='place'`, 8000);
   await H.click('.tpl[data-tpl="spread"]'); await H.click('#btn-ready'); await G.click('.tpl[data-tpl="cluster"]'); await G.click('#btn-ready');
   await waitFor(H, `Underway.UI.S.screen==='battle'`, 15000); await waitFor(G, `Underway.UI.S.screen==='battle'`, 15000);
