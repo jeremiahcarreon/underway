@@ -2349,7 +2349,7 @@ const Anim = (function(){
    ============================================================ */
 const UI = (function(){
   const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
-  const S={ screen:'home', room:null, role:null, mode:null, aiLevel:'hunter', name:'', navy:null, game:null, link:null, chan:null, rng:null, sid:null, peerSid:null,
+  const S={ screen:'home', room:null, role:null, mode:null, aiLevel:'admiral', name:'', navy:null, game:null, link:null, chan:null, rng:null, sid:null, peerSid:null,
             lobby:{hostNavy:null,guestNavy:null,hostName:'',guestName:'',stage:'lobby',guestOnline:false,hostReady:false,guestReady:false,picker:'host',rematch:false,nextFirst:null},
             pendingFire:null, oppHistory:null, settings:null, oceans:{own:null,enemy:null,place:null}, place:{pid:'host',fleet:null,sel:0,drag:null,locked:false},
             target:null, targets:[], weapon:'shell', airDir:true, torpDir:0, queue:Promise.resolve(), selShip:0, viewAs:'host', tab:'own', gameOverHandled:false, myRematch:false, oppRematch:false, chatLog:[], busy:false, tickTimer:0, gameOverSent:false, linkState:'offline' };
@@ -2538,7 +2538,7 @@ const UI = (function(){
     NAVIES.forEach(n=>{ const b=document.createElement('button'); b.className='navybtn'; const owner=takenBy(n.id); const mine=(pid==='host'?l.hostNavy:l.guestNavy)===n.id; if(mine) b.classList.add('selected'); else if(owner) b.classList.add('locked'); b.innerHTML=Render.flagSVG(n.id,64,40)+'<span>'+n.name+'</span>'; b.title=n.prefix+' — '+Object.values(n.ships).join(', '); b.addEventListener('click',()=>pickNavy(n.id)); grid.appendChild(b); });
     let status=''; const startBtn=$('#btn-lobby-start');
     if(S.mode==='net'){ if(S.role==='host'){ status=l.guestOnline?(l.guestNavy&&l.hostNavy?'Both navies chosen. Confirm to start placing fleets.':'Opponent connected. Choose navies.'):'Share the room code or link. Waiting for an opponent to join…'; startBtn.classList.remove('hidden'); startBtn.disabled=!(l.guestOnline&&l.hostNavy&&l.guestNavy); } else { status=l.hostNavy?'Host has chosen '+navy(l.hostNavy).name+'. Pick your navy; the host confirms.':'Connected. Waiting for the host to choose…'; startBtn.classList.add('hidden'); } }
-    else if(S.mode==='ai'){ status='Pick your navy. The AI ('+S.aiLevel+') takes one of the rest.'; startBtn.classList.remove('hidden'); startBtn.disabled=!(l.hostNavy&&l.guestNavy); }
+    else if(S.mode==='ai'){ status='Pick your navy. The AI ('+S.aiLevel+(S.aiLevel==='admiral'?', maneuvers':', static fleet')+') takes one of the rest.'; startBtn.classList.remove('hidden'); startBtn.disabled=!(l.hostNavy&&l.guestNavy); }
     else { status=(pid==='host'?(l.hostName||'Player 1'):(l.guestName||'Player 2'))+' picks a navy'+(pid==='host'?', then hand over to Player 2.':'.'); startBtn.classList.remove('hidden'); startBtn.textContent=pid==='host'&&!l.guestNavy?'Next: Player 2 picks':'Confirm & place fleets'; startBtn.disabled=pid==='host'?!l.hostNavy:!(l.hostNavy&&l.guestNavy); }
     if(S.mode!=='hotseat') startBtn.textContent='Confirm & place fleets';
     $('#lobby-status').textContent=status;
@@ -2853,7 +2853,11 @@ const UI = (function(){
     clearTargets(); S.busy=true; renderActions();
     if(S.mode==='net') send('MINE',{cell:{x:cell.x,y:cell.y}, mineId:r.mine.id, turn:g.turn});
     await Anim.run(()=>Anim.playMineLay(S.oceans.enemy, cell));
-    S.game=r.game; S.busy=false; appendLog('me','You laid a mine at '+cellName(cell)+' ('+Rules.weapon(S.game.players[pid],'mine').usesRemaining+' left). Turn ends.', g.turn); toast('Mine laid at '+cellName(cell)+'. It detonates when an enemy section moves onto it.','',2600); save(); afterAction();
+    if(r.immediate){ await Anim.run(()=>Anim.playMineHit(S.oceans.enemy, cell, r.immediate, {owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')})); }
+    S.game=r.game; S.busy=false; appendLog('me','You laid a mine at '+cellName(cell)+' ('+Rules.weapon(S.game.players[pid],'mine').usesRemaining+' left). Turn ends.', g.turn);
+    if(r.immediate){ const sh=r.immediate; appendLog('me','It detonated on contact: '+Rules.resultText(sh), sh.turn); toast('Mine laid right on a ship — '+Rules.resultText(sh)+'!','sunk',3200); const cn=sh.cls?SHIP_CLASSES[sh.cls].name:''; if(sh.result===RESULT.SUNK) chat(g.players[pid].navy,'sunkEnemy',{cls:cn, ship:shipLabel(them(),sh.cls)}); else if(sh.result===RESULT.HIT) chat(g.players[pid].navy, sh.crippled?'hitCrippled':'hit', {cls:cn, ship:shipLabel(them(),sh.cls)}); }
+    else toast('Mine laid at '+cellName(cell)+'. It detonates when an enemy section moves onto it.','',2600);
+    save(); afterAction();
   }
   async function doRadar(shipIdx, anchor){
     const g=S.game; const pid=me(); const ship=(g.players[pid].fleet||[])[shipIdx];
@@ -2909,6 +2913,12 @@ const UI = (function(){
   }
   async function onRemoteMine(p){
     const g=S.game; const r=Rules.layMine(g, them(), p.cell, p.mineId); if(!r.ok){ console.warn('MINE refused', r.reason); return; }
+    if(r.immediate){ // it landed on one of our sections: report it and show the blast on our ocean
+      const mh=r.immediate; send('MINE_HIT',{mineId:mh.mineId, cell:mh.cell, result:mh.result, cls:mh.cls, crippled:mh.crippled, crippledBy:mh.crippledBy, footprint:mh.footprint, turn:mh.turn});
+      const struck=mh.shipIdx>=0?g.players[me()].fleet[mh.shipIdx]:null; S.busy=true; hideBanner(); renderActions(); if(isMobile()) setTab('own');
+      await Anim.run(()=>Anim.playMineHit(S.oceans.own, mh.cell, mh, {owner:true, ship:struck, shipIdx:mh.shipIdx, navyId:g.players[me()].navy, shakeEl:$('#side-own')}));
+      S.game=r.game; S.busy=false; appendLog('them','Enemy mine laid right on your '+SHIP_CLASSES[mh.cls].name+' at '+cellName(mh.cell)+': '+Rules.resultText(mh), mh.turn); toast('MINE! '+Rules.resultText(mh)+' on your '+SHIP_CLASSES[mh.cls].name,'hit',3400); save(); afterAction(); return;
+    }
     S.game=r.game; Sfx.splash(); appendLog('them','Enemy laid a mine somewhere in your waters.', g.turn); toast('Enemy laid a mine somewhere in your waters! Moving is now a gamble.','err',3400); save(); afterAction();
   }
   async function onRemoteMineHit(p){
@@ -2944,9 +2954,9 @@ const UI = (function(){
   function afterAction(){ save(); if(S.screen!=='battle') return; refreshBattle(); checkTurn(); }
   async function checkTurn(){
     const g=S.game; if(g.winner){ onGameOver(); return; }
-    if(S.mode==='ai'){ if(g.current==='guest'){ banner('Enemy fleet is maneuvering', true); setTimeout(aiTurn, 900*Anim.scale()+200); } else myTurnBanner(); return; }
+    if(S.mode==='ai'){ if(g.current==='guest'){ banner('Enemy turn — stand by', true); setTimeout(aiTurn, 900*Anim.scale()+200); } else myTurnBanner(); return; }
     if(S.mode==='hotseat'){ if(g.current!==S.viewAs){ hideBanner(); await curtain('Pass the device to '+g.players[g.current].name, 'Turn '+g.turn+'. Both oceans are hidden until the next admiral is ready.'); S.viewAs=g.current; S.target=null; S.targets=[]; S.weapon='shell'; S.selShip=firstMobileShip(); S.oceans.own.clearEffects(); S.oceans.enemy.clearEffects(); S.oceans.enemy.radarView=null; S.oceans.own.radarView=null; S.oceans.enemy.hoverArea=null; S.oceans.enemy.hoverLine=null; renderLog(); refreshBattle(); setTab('own'); } myTurnBanner(); return; }
-    if(g.current===me()){ if(S.pendingFire){ S.pendingFire=null; } myTurnBanner(); } else banner('Enemy fleet is maneuvering', true);
+    if(g.current===me()){ if(S.pendingFire){ S.pendingFire=null; } myTurnBanner(); } else banner('Enemy turn — stand by', true);
   }
   function myTurnBanner(){ banner('Your turn, Admiral', false, 1800); Sfx.chime(); chat(S.game.players[me()].navy||'us','turnStart'); if(isMobile()) setTab('own'); }
   async function aiTurn(){
@@ -3095,7 +3105,7 @@ const UI = (function(){
     if(params.has('peer')){ S.settings.peer=params.get('peer')||''; Store.saveSettings(S.settings); }
     if(params.get('test')==='1'){ runTestsScreen(); return; }
     const room=(params.get('room')||'').toUpperCase();
-    if(room){ const saved=Store.load(room); if(saved){ showScreen('home'); renderHome(); offerResume(saved); } else { S.aiLevel='hunter'; $('#home-name').value=S.settings.name||''; if(!S.settings.name){ showScreen('home'); renderHome(); $('#join-panel').classList.remove('hidden'); $('#join-code').value=room; toast('Enter your name, then Join to enter room '+room,'',4000); } else startNet('guest', room); } return; }
+    if(room){ const saved=Store.load(room); if(saved){ showScreen('home'); renderHome(); offerResume(saved); } else { $('#home-name').value=S.settings.name||''; if(!S.settings.name){ showScreen('home'); renderHome(); $('#join-panel').classList.remove('hidden'); $('#join-code').value=room; toast('Enter your name, then Join to enter room '+room,'',4000); } else startNet('guest', room); } return; }
     showScreen('home'); renderHome();
   }
   return { boot, S, showScreen, toast, runTestsScreen, save, restore, startNet, startSolo };
