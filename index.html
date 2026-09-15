@@ -931,7 +931,7 @@ const Rules = (function(){
   /* ---- Game state ---- */
   function createPlayer(id, name, navyId){
     return { id, name:name||(id==='host'?'Host':'Guest'), navy:navyId||null, ready:false, fleet:null, initialFleet:null,
-             shots:[], moves:[], weapons:[{id:'shell', name:'Standard shell', cooldown:0, usesRemaining:null}] };
+             shots:[], moves:[], mines:[], sightings:[], weapons:WEAPON_ORDER.map(w=>({id:w, cooldown:0, usesRemaining:WEAPONS[w].uses})) };
   }
   function createGame(opts){
     opts=opts||{};
@@ -947,11 +947,33 @@ const Rules = (function(){
     g.players[pid].fleet=f; g.players[pid].initialFleet=clone(f); g.players[pid].ready=true;
     return {ok:true, game:g};
   }
+  // Older saves may predate mines/sightings/extra weapons.
+  function ensure(p){ p.mines=p.mines||[]; p.sightings=p.sightings||[]; p.weapons=p.weapons||[]; WEAPON_ORDER.forEach(id=>{ if(!p.weapons.find(w=>w.id===id)) p.weapons.push({id, cooldown:0, usesRemaining:WEAPONS[id].uses}); }); return p; }
+  function weapon(p,id){ ensure(p); return p.weapons.find(w=>w.id===id); }
+  function weaponReady(game, pid, id){
+    if(!WEAPONS[id]) return {ok:false, reason:'Unknown weapon'};
+    const w=weapon(game.players[pid], id);
+    if(w.usesRemaining===0) return {ok:false, reason:'No '+WEAPONS[id].name.toLowerCase()+(id==='mine'?'s':'')+' left this game'};
+    if(w.cooldown>0) return {ok:false, reason:'Reloading: '+w.cooldown+' more turn'+(w.cooldown===1?'':'s')};
+    return {ok:true};
+  }
+  function spendWeapon(p,id){ const w=weapon(p,id); w.cooldown=WEAPONS[id].cooldown; if(w.usesRemaining!=null) w.usesRemaining=Math.max(0,w.usesRemaining-1); }
+  function recordShot(g, pid, cell, res, weaponId, extra){
+    const ap=g.players[pid];
+    const shot=Object.assign({n:g.log.length, turn:g.turn, player:pid, kind:'shot', weapon:weaponId||'shell', cell:{x:cell.x,y:cell.y}, result:res.result, cls:res.cls||null,
+      shipIdx:(res.shipIdx!=null&&res.shipIdx>=0)?res.shipIdx:(res.cls?CLASS_ORDER.indexOf(res.cls):-1), crippled:!!res.crippled, crippledBy:res.crippledBy||null, footprint:res.footprint?clone(res.footprint):null}, extra||{});
+    ap.shots.push(shot); g.log.push(shot); return shot;
+  }
+  function checkWin(g, pid){
+    const sunk=new Set(g.players[pid].shots.filter(s=>s.result===RESULT.SUNK).map(s=>s.cls));
+    if(sunk.size>=CLASS_ORDER.length){ g.winner=pid; g.stage='over'; g.endReason='fleet'; g.phase='done'; return true; }
+    return false;
+  }
   function startBattle(game, first){
-    const g=clone(game); g.stage='battle'; g.turn=1; g.first=first; g.current=first; g.phase='maneuver'; g.maneuvered=false; g.winner=null; g.endReason=null; g.log=[];
+    const g=clone(game); ensure(g.players.host); ensure(g.players.guest); g.stage='battle'; g.turn=1; g.first=first; g.current=first; g.phase='maneuver'; g.maneuvered=false; g.winner=null; g.endReason=null; g.log=[];
     return g;
   }
-  function endTurn(g){ g.turn+=1; g.current=other(g.current); g.phase='maneuver'; g.maneuvered=false; return g; }
+  function endTurn(g){ g.turn+=1; g.current=other(g.current); g.phase='maneuver'; g.maneuvered=false; ensure(g.players[g.current]).weapons.forEach(w=>{ if(w.cooldown>0) w.cooldown--; }); return g; }
   function guard(game, pid){
     if(game.stage!=='battle') return 'Battle is not in progress';
     if(game.winner) return 'The battle is over';
@@ -963,16 +985,28 @@ const Rules = (function(){
     if(game.phase!=='maneuver') return {ok:false, reason:'Maneuver phase is over', game};
     const p=game.players[pid]; if(!p.fleet) return {ok:false, reason:'No fleet', game};
     const mv=canMove(p.fleet, shipIdx, type); if(!mv.ok) return {ok:false, reason:mv.reason, game};
-    const g=clone(game); const gp=g.players[pid];
+    const g=clone(game); const gp=g.players[pid]; const opp=ensure(g.players[other(pid)]);
+    const oldKeys=new Set(shipCells(gp.fleet[shipIdx]).map(cellKey));
     const from={bow:clone(gp.fleet[shipIdx].bow), heading:gp.fleet[shipIdx].heading};
     gp.fleet[shipIdx]=mv.ship;
     const rec={n:g.log.length, turn:g.turn, player:pid, kind:'move', ship:shipIdx, cls:mv.ship.cls, type, from, to:{bow:clone(mv.ship.bow), heading:mv.ship.heading}};
     gp.moves.push(rec); g.log.push(rec);
     g.maneuvered=true;
+    // Enemy mines: any section that ENTERS a mined cell sets it off (a standard hit on that section).
+    const mineHits=[];
+    for(const c of shipCells(mv.ship)){
+      if(oldKeys.has(cellKey(c))) continue;
+      const m=opp.mines.find(x=>x.live&&x.cell.x===c.x&&x.cell.y===c.y); if(!m) continue;
+      m.live=false; m.hitTurn=g.turn;
+      const res=resolveShot(gp.fleet, c, g.turn); gp.fleet=res.fleet;
+      mineHits.push(recordShot(g, opp.id, c, res, 'mine', {section:res.section, mineId:m.id}));
+    }
+    const ship=gp.fleet[shipIdx];
+    if(mineHits.length && checkWin(g, opp.id)) return {ok:true, game:g, ended:true, ship, mineHits};
     const rot = type==='rotcw'||type==='rotccw';
-    if(rot){ endTurn(g); return {ok:true, game:g, ended:true, ship:mv.ship}; }
+    if(rot){ endTurn(g); return {ok:true, game:g, ended:true, ship, mineHits}; }
     g.phase='fire';
-    return {ok:true, game:g, ended:false, ship:mv.ship};
+    return {ok:true, game:g, ended:false, ship, mineHits};
   }
   function skipManeuver(game, pid){
     const err=guard(game,pid); if(err) return {ok:false, reason:err, game};
@@ -992,14 +1026,118 @@ const Rules = (function(){
       if(!dp.fleet) return {ok:false, reason:'Defender fleet unknown', game};
       res=resolveShot(dp.fleet, cell, g.turn); dp.fleet=res.fleet;
     }
-    const shot={n:g.log.length, turn:g.turn, player:pid, kind:'shot', cell:{x:cell.x,y:cell.y}, result:res.result, cls:res.cls||null, shipIdx:res.shipIdx,
-                crippled:!!res.crippled, crippledBy:res.crippledBy||null, footprint:res.footprint?clone(res.footprint):null};
-    if(!override) shot.section=res.section;
-    ap.shots.push(shot); g.log.push(shot);
-    const sunkClasses=new Set(ap.shots.filter(s=>s.result===RESULT.SUNK).map(s=>s.cls));
-    if(sunkClasses.size>=CLASS_ORDER.length){ g.winner=pid; g.stage='over'; g.endReason='fleet'; g.phase='done'; }
-    else endTurn(g);
+    const shot=recordShot(g, pid, cell, res, 'shell', override?{}:{section:res.section});
+    spendWeapon(ap,'shell');
+    if(!checkWin(g,pid)) endTurn(g);
     return {ok:true, game:g, shot, res};
+  }
+  function actionGuard(game, pid, weaponId){
+    const err=guard(game,pid); if(err) return err;
+    if(game.phase!=='fire' && game.phase!=='maneuver') return 'Cannot act now';
+    const wr=weaponReady(game,pid,weaponId); if(!wr.ok) return wr.reason;
+    return null;
+  }
+  /* ---- Machine gun: four bullets; a ship is damaged (one section) only when two or more bullets strike it ---- */
+  function resolveMG(fleet, cells, turn){
+    let f=clone(fleet);
+    const results=cells.map(c=>({cell:{x:c.x,y:c.y}, result:RESULT.MISS, cls:null, shipIdx:-1, section:-1, crippled:false, crippledBy:null, footprint:null}));
+    const byShip=new Map();
+    cells.forEach((c,i)=>{ for(let k=0;k<f.length;k++){ const sh=f[k]; if(!sh.bow) continue; const sec=sectionAt(sh,c); if(sec<0) continue;
+      if(!byShip.has(k)) byShip.set(k,[]); byShip.get(k).push({i,sec});
+      results[i]={cell:{x:c.x,y:c.y}, result:RESULT.GRAZE, cls:sh.cls, shipIdx:k, section:sec, crippled:false, crippledBy:null, footprint:null}; break; } });
+    byShip.forEach((hits,k)=>{
+      if(hits.length<2) return;
+      const target=hits.find(h=>!f[k].hits[h.sec])||hits[0];
+      const r=resolveShot(f, cells[target.i], turn); f=r.fleet;
+      results[target.i]={cell:{x:cells[target.i].x,y:cells[target.i].y}, result:r.result, cls:r.cls, shipIdx:r.shipIdx, section:r.section, crippled:r.crippled, crippledBy:r.crippledBy, footprint:r.footprint};
+    });
+    return {results, fleet:f};
+  }
+  // opts: {cells, shipIdx | ship (geometry from a remote attacker), override:{results}}
+  function fireMG(game, pid, opts){
+    opts=opts||{}; const err=actionGuard(game,pid,'mg'); if(err) return {ok:false, reason:err, game};
+    const cells=opts.cells;
+    if(!Array.isArray(cells)||cells.length!==WEAPONS.mg.bullets||cells.some(c=>!c||!inBounds(c))) return {ok:false, reason:'Pick exactly '+WEAPONS.mg.bullets+' cells', game};
+    if(new Set(cells.map(cellKey)).size!==cells.length) return {ok:false, reason:'Each bullet needs its own cell', game};
+    const ap=game.players[pid]; const ship=opts.ship||(ap.fleet&&ap.fleet[opts.shipIdx]);
+    if(!ship||!ship.bow||ship.sunk) return {ok:false, reason:'Choose a ship that is still afloat to fire from', game};
+    const g=clone(game); const def=other(pid); const dp=ensure(g.players[def]); const gp=ensure(g.players[pid]);
+    let results;
+    if(opts.override){ results=opts.override.results||[]; if(results.length!==cells.length) return {ok:false, reason:'Bad machine-gun report', game}; }
+    else { if(!dp.fleet) return {ok:false, reason:'Defender fleet unknown', game}; const r=resolveMG(dp.fleet, cells, g.turn); dp.fleet=r.fleet; results=r.results; }
+    const group='mg'+g.turn;
+    const shots=results.map((res,i)=>recordShot(g, pid, cells[i], res, 'mg', Object.assign({group, bullet:i}, opts.override?{}:{section:res.section})));
+    const sighting={turn:g.turn, kind:'mg', cls:ship.cls, bow:clone(ship.bow), heading:ship.heading, cells:shipCells(ship)};
+    dp.sightings.push(sighting); spendWeapon(gp,'mg');
+    if(!checkWin(g,pid)) endTurn(g);
+    return {ok:true, game:g, shots, results, sighting};
+  }
+  /* ---- Mines: laid instead of a shot; hidden; detonate when an enemy section moves onto the cell ---- */
+  function layMine(game, pid, cell, remoteId){
+    const err=actionGuard(game,pid,'mine'); if(err) return {ok:false, reason:err, game};
+    if(!cell||!inBounds(cell)) return {ok:false, reason:'Off the board', game};
+    const g=clone(game); const gp=ensure(g.players[pid]);
+    if(gp.mines.some(m=>m.live&&m.cell.x===cell.x&&m.cell.y===cell.y)) return {ok:false, reason:'You already have a mine there', game};
+    const mine={id:remoteId||('m'+g.turn+pid), cell:{x:cell.x,y:cell.y}, turn:g.turn, live:true, hitTurn:null};
+    gp.mines.push(mine); spendWeapon(gp,'mine');
+    g.log.push({n:g.log.length, turn:g.turn, player:pid, kind:'mine', cell:{x:cell.x,y:cell.y}, mineId:mine.id});
+    endTurn(g);
+    return {ok:true, game:g, mine};
+  }
+  // The mine owner's device (net): the defender reports that their move set off our mine.
+  function applyRemoteMineHit(game, minerPid, p){
+    const g=clone(game); const gp=ensure(g.players[minerPid]);
+    const m=gp.mines.find(x=>x.id===p.mineId)||gp.mines.find(x=>x.live&&x.cell.x===p.cell.x&&x.cell.y===p.cell.y);
+    if(!m) return {ok:false, reason:'Unknown mine', game};
+    if(!m.live) return {ok:false, reason:'Mine already spent', game};
+    m.live=false; m.hitTurn=p.turn||g.turn;
+    const shot=recordShot(g, minerPid, p.cell, {result:p.result, cls:p.cls, crippled:!!p.crippled, crippledBy:p.crippledBy||null, footprint:p.footprint||null}, 'mine', {mineId:m.id});
+    if(p.turn) shot.turn=p.turn;
+    checkWin(g, minerPid);
+    return {ok:true, game:g, shot};
+  }
+  /* ---- Radar sweep: square sized by the scanning ship's class; scanning ship must be undamaged ---- */
+  function radarArea(cls, anchor){ const n=SHIP_CLASSES[cls].size; const x=Math.max(0,Math.min(SIZE-n,anchor.x)), y=Math.max(0,Math.min(SIZE-n,anchor.y)); return {x,y,size:n}; }
+  function inArea(area,c){ return c.x>=area.x&&c.x<area.x+area.size&&c.y>=area.y&&c.y<area.y+area.size; }
+  function radarContacts(fleet, area){ const out=[]; fleet.forEach(s=>{ if(!s.bow||s.sunk) return; shipCells(s).forEach((c,sec)=>{ if(inArea(area,c)) out.push({cell:{x:c.x,y:c.y}, cls:s.cls, section:sec, heading:s.heading, damaged:!!s.hits[sec]}); }); }); return out; }
+  // opts: {anchor, shipIdx | ship, override:{contacts}}
+  function radar(game, pid, opts){
+    opts=opts||{}; const err=actionGuard(game,pid,'radar'); if(err) return {ok:false, reason:err, game};
+    const ap=game.players[pid]; const ship=opts.ship||(ap.fleet&&ap.fleet[opts.shipIdx]);
+    if(!ship||!ship.bow||ship.sunk) return {ok:false, reason:'Choose a ship that is still afloat', game};
+    if(hitCount(ship)>0) return {ok:false, reason:'Radar works only from an undamaged ship', game};
+    if(!opts.anchor||!inBounds(opts.anchor)) return {ok:false, reason:'Off the board', game};
+    const area=radarArea(ship.cls, opts.anchor);
+    const g=clone(game); const def=other(pid); const dp=ensure(g.players[def]); const gp=ensure(g.players[pid]);
+    let contacts;
+    if(opts.override){ contacts=opts.override.contacts||[]; } else { if(!dp.fleet) return {ok:false, reason:'Defender fleet unknown', game}; contacts=radarContacts(dp.fleet, area); }
+    const sighting={turn:g.turn, kind:'radar', cls:ship.cls, bow:clone(ship.bow), heading:ship.heading, cells:shipCells(ship), area};
+    dp.sightings.push(sighting); spendWeapon(gp,'radar');
+    g.log.push({n:g.log.length, turn:g.turn, player:pid, kind:'radar', cls:ship.cls, area, count:contacts.length});
+    endTurn(g);
+    return {ok:true, game:g, area, contacts, sighting};
+  }
+  /* ---- Air strike: the undamaged Carrier bombs three cells in a straight line, each bomb a full shot ---- */
+  function lineCells(anchor, horizontal, n){ n=n||WEAPONS.airstrike.bombs; const x0=horizontal?Math.max(0,Math.min(SIZE-n,anchor.x)):anchor.x, y0=horizontal?anchor.y:Math.max(0,Math.min(SIZE-n,anchor.y)); const out=[]; for(let i=0;i<n;i++) out.push(horizontal?{x:x0+i,y:y0}:{x:x0,y:y0+i}); return out; }
+  function isLine(cells){ if(cells.length<2) return true; const xs=new Set(cells.map(c=>c.x)), ys=new Set(cells.map(c=>c.y)); if(xs.size!==1&&ys.size!==1) return false; const sorted=cells.slice().sort((a,b)=>a.x-b.x||a.y-b.y); for(let i=1;i<sorted.length;i++){ if(Math.abs(sorted[i].x-sorted[i-1].x)+Math.abs(sorted[i].y-sorted[i-1].y)!==1) return false; } return true; }
+  // opts: {cells, ship (remote carrier geometry) , override:{results}}
+  function airstrike(game, pid, opts){
+    opts=opts||{}; const err=actionGuard(game,pid,'airstrike'); if(err) return {ok:false, reason:err, game};
+    const ap=game.players[pid]; const carrier=opts.ship||(ap.fleet&&ap.fleet[0]);
+    if(!carrier||!carrier.bow||carrier.sunk) return {ok:false, reason:'No Carrier afloat', game};
+    if(hitCount(carrier)>0) return {ok:false, reason:'Air strike needs an undamaged Carrier', game};
+    const cells=opts.cells;
+    if(!Array.isArray(cells)||cells.length!==WEAPONS.airstrike.bombs||cells.some(c=>!c||!inBounds(c))||!isLine(cells)) return {ok:false, reason:'Bombs fall on '+WEAPONS.airstrike.bombs+' cells in a straight line', game};
+    const g=clone(game); const def=other(pid); const dp=ensure(g.players[def]); const gp=ensure(g.players[pid]);
+    let results;
+    if(opts.override){ results=opts.override.results||[]; if(results.length!==cells.length) return {ok:false, reason:'Bad air-strike report', game}; }
+    else { if(!dp.fleet) return {ok:false, reason:'Defender fleet unknown', game}; results=[]; let f=dp.fleet; cells.forEach(c=>{ const r=resolveShot(f,c,g.turn); f=r.fleet; results.push(r); }); dp.fleet=f; }
+    const group='air'+g.turn;
+    const shots=results.map((res,i)=>recordShot(g, pid, cells[i], res, 'airstrike', Object.assign({group, bomb:i}, opts.override?{}:{section:res.section})));
+    const sighting={turn:g.turn, kind:'airstrike', cls:'carrier', bow:clone(carrier.bow), heading:carrier.heading, cells:shipCells(carrier)};
+    dp.sightings.push(sighting); spendWeapon(gp,'airstrike');
+    if(!checkWin(g,pid)) endTurn(g);
+    return {ok:true, game:g, shots, results, sighting};
   }
   // Rotation on a remote opponent: they send END_TURN and we simply advance.
   function remoteEndTurn(game, pid){
@@ -1016,6 +1154,7 @@ const Rules = (function(){
       case RESULT.HIT: return 'Hit: '+cn+(shot.crippled?' — Crippled: dead in the water':'');
       case RESULT.CONFIRMED: return 'Confirmed: '+cn+' still here';
       case RESULT.SUNK: return 'Sunk: '+cn;
+      case RESULT.GRAZE: return 'Grazed: '+cn+' (no damage)';
     }
     return '';
   }
@@ -1031,7 +1170,7 @@ const Rules = (function(){
       const fp=new Set(s.footprint.map(cellKey));
       fp.forEach(k=>{ if(!map.has(k)) map.set(k,{cell:s.footprint.find(c=>cellKey(c)===k), history:[], latest:null, stale:false, sunkCls:null}); map.get(k).sunkCls=s.cls; });
       map.forEach((e,k)=>{
-        if(e.latest && (e.latest.result===RESULT.HIT||e.latest.result===RESULT.CONFIRMED) && e.latest.cls===s.cls && !fp.has(k)) e.stale=true;
+        if(e.latest && (e.latest.result===RESULT.HIT||e.latest.result===RESULT.CONFIRMED||e.latest.result===RESULT.GRAZE) && e.latest.cls===s.cls && !fp.has(k)) e.stale=true;
       });
     });
     return map;
@@ -1064,13 +1203,16 @@ const Rules = (function(){
         if(!mvp||score>mvp.score) mvp={cls:s.cls, score, dmgTurns, absorbed:s.absorbed||0};
       });
     }
-    return { turns:game.turn, shots:shots.length, hits, accuracy: shots.length?hits/shots.length:0, hitsByClass, sternCripples,
+    const w={ mg:new Set(shots.filter(s=>s.weapon==='mg').map(s=>s.group)).size, minesLaid:game.log.filter(e=>e.kind==='mine'&&e.player===pid).length, mineHits:shots.filter(s=>s.weapon==='mine').length,
+              radar:game.log.filter(e=>e.kind==='radar'&&e.player===pid).length, airstrikes:new Set(shots.filter(s=>s.weapon==='airstrike').map(s=>s.group)).size };
+    return { turns:game.turn, shots:shots.length, hits, accuracy: shots.length?hits/shots.length:0, hitsByClass, sternCripples, weapons:w,
              advances:adv, reverses:rev, rotations:rot, longestChase, longestChaseCls, mvp, shipsLost: p.fleet?sunkCount(p.fleet):0, shipsSunk: sunkCount(o.fleet||[]) || shots.filter(s=>s.result===RESULT.SUNK).length };
   }
 
   return { clone, inBounds, other, makeShip, emptyFleet, shipCells, sternCell, sectionAt, hitCount, mobility, rotateHeading, occupancy,
            canPlace, placeShip, validatePlacement, movedShip, canMove, applyMove, resolveShot, allSunk, sunkCount, randomFleet, templateFleet, TEMPLATES,
-           createPlayer, createGame, setFleet, startBattle, endTurn, maneuver, skipManeuver, fire, remoteEndTurn, surrender, resultText, pegMap, classTally, computeStats };
+           createPlayer, createGame, setFleet, startBattle, endTurn, maneuver, skipManeuver, fire, remoteEndTurn, surrender, resultText, pegMap, classTally, computeStats,
+           ensure, weapon, weaponReady, spendWeapon, checkWin, resolveMG, fireMG, layMine, applyRemoteMineHit, radarArea, inArea, radarContacts, radar, lineCells, isLine, airstrike };
 })();
 
 /* ============================================================
