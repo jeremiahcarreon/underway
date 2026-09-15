@@ -3051,6 +3051,101 @@ const Tests = (function(){
   test('seeded RNG is deterministic', ()=>{ const a=RNG(99), b=RNG(99); for(let i=0;i<20;i++) eq(a.next(),b.next()); const c=RNG('room-ABC'); ok(c.next()!==RNG('room-ABD').next()); });
   test('cell notation round trip', ()=>{ eq(cellName(P(2,6)),'C7'); eq(parseCell('c7'),P(2,6)); eq(parseCell('J10'),P(9,9)); eq(parseCell('K1'),null); });
 
+  /* --- weapons --- */
+  test('weapons: every player starts with shell, MG, 2 mines, radar, 1 air strike', ()=>{ const p=Rules.createPlayer('host'); eq(p.weapons.map(w=>w.id),['shell','mg','mine','radar','airstrike']); eq(p.weapons.find(w=>w.id==='mine').usesRemaining,2); eq(p.weapons.find(w=>w.id==='airstrike').usesRemaining,1); });
+  test('machine gun: two bullets on one ship = one section of damage; a single bullet only grazes', ()=>{
+    const f=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'},{cls:'patrol',x:2,y:3,h:'W'}]);
+    const r=Rules.resolveMG(f,[P(5,5),P(5,6),P(2,3),P(9,9)],1);
+    eq(r.results.map(x=>x.result),['hit','graze','graze','miss']); eq(r.results[0].cls,'destroyer'); eq(r.results[2].cls,'patrol');
+    eq(Rules.hitCount(r.fleet[2]),1,'destroyer took exactly one hit'); eq(Rules.hitCount(r.fleet[4]),0,'patrol undamaged');
+  });
+  test('machine gun: damage prefers an undamaged section, can sink, and reports class on grazes', ()=>{
+    let f=fleetWith([{cls:'patrol',x:2,y:3,h:'W'}]); f=hitShip(f,'patrol',[0]).fleet; // bow already hit
+    const r=Rules.resolveMG(f,[P(2,3),P(3,3),P(7,7),P(8,8)],2); const sunk=r.results.find(x=>x.result==='sunk'); ok(sunk,'stern took the damage -> sunk'); eq(sunk.cell,P(3,3)); ok(r.results[0].result==='graze');
+  });
+  test('machine gun: game flow, cooldown of 10 own turns, sighting for the defender', ()=>{
+    let g=localGame(31); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]);
+    let r=Rules.fireMG(g,'host',{shipIdx:1, cells:[P(5,5),P(5,6),P(0,0),P(9,9)]}); ok(r.ok,r.reason); g=r.game;
+    eq(g.players.host.shots.length,4); eq(g.players.host.shots[0].weapon,'mg'); eq(g.current,'guest');
+    eq(g.players.guest.sightings.length,1); eq(g.players.guest.sightings[0].cls,'battleship'); eq(g.players.guest.sightings[0].cells.length,4);
+    eq(Rules.weapon(g.players.host,'mg').cooldown,10);
+    g=Rules.fire(g,'guest',P(9,9)).game; eq(Rules.weapon(g.players.host,'mg').cooldown,9,'cooldown ticks at the start of own turn');
+    const again=Rules.fireMG(g,'host',{shipIdx:1, cells:[P(1,1),P(1,2),P(1,3),P(1,4)]}); ok(!again.ok); ok(/Reloading/.test(again.reason),again.reason);
+    const dup=Rules.fireMG(localGame(31),'host',{shipIdx:1, cells:[P(1,1),P(1,1),P(1,3),P(1,4)]}); ok(!dup.ok);
+  });
+  test('machine gun: remote report applied by the attacker (override) matches the defender', ()=>{
+    let g=localGame(32); const def=g.players.guest.fleet; const cells=[P(0,0),P(0,1),P(5,5),P(9,9)];
+    const local=Rules.fireMG(g,'host',{shipIdx:0, cells}); ok(local.ok);
+    let a=Rules.clone(g); a.players.guest.fleet=null; const remote=Rules.fireMG(a,'host',{ship:g.players.host.fleet[0], cells, override:{results:local.results.map(x=>({result:x.result,cls:x.cls,crippled:x.crippled,crippledBy:x.crippledBy,footprint:x.footprint}))}});
+    ok(remote.ok,remote.reason); eq(remote.game.players.host.shots.map(s=>s.result), local.game.players.host.shots.map(s=>s.result)); void def;
+  });
+  test('mines: laying uses the shot and ends the turn; only two per game', ()=>{
+    let g=localGame(33); let r=Rules.layMine(g,'host',P(4,4)); ok(r.ok,r.reason); g=r.game; eq(g.current,'guest'); eq(g.players.host.mines.length,1); eq(Rules.weapon(g.players.host,'mine').usesRemaining,1);
+    g=Rules.fire(g,'guest',P(9,9)).game; r=Rules.layMine(g,'host',P(4,4)); ok(!r.ok,'same cell refused'); r=Rules.layMine(g,'host',P(6,6)); ok(r.ok); g=r.game; g=Rules.fire(g,'guest',P(9,9)).game;
+    r=Rules.layMine(g,'host',P(7,7)); ok(!r.ok); ok(/left/.test(r.reason),r.reason);
+  });
+  test('mines: dormant under a ship, detonate when a section enters the cell (standard hit, crippling rules apply)', ()=>{
+    let g=localGame(34); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]);
+    g=Rules.layMine(g,'host',P(5,6)).game;                 // under the destroyer's mid section: dormant
+    eq(g.players.host.shots.length,0);
+    let r=Rules.maneuver(g,'guest',2,'advance'); ok(r.ok,r.reason); // sections shift north: 5,4 5,5 5,6 -> stern enters 5,6? no: 5,6 was mid, now stern... cells become 5,4 5,5 5,6; entered = 5,4 only
+    eq(r.mineHits.length,0,'no section entered the mined cell'); g=r.game;
+    g=Rules.fire(g,'guest',P(9,9)).game; g=Rules.layMine(g,'host',P(5,3)).game;   // ahead of the bow
+    r=Rules.maneuver(g,'guest',2,'advance'); ok(r.ok); eq(r.mineHits.length,1); const hit=r.mineHits[0];
+    eq(hit.weapon,'mine'); eq(hit.result,'hit'); eq(hit.cls,'destroyer'); eq(hit.player,'host'); eq(hit.cell,P(5,3));
+    ok(r.game.players.guest.fleet[2].hits[0],'bow section damaged'); ok(!r.game.players.host.mines.find(m=>m.cell.x===5&&m.cell.y===3).live,'mine spent');
+    eq(r.game.phase,'fire','mover still gets to fire after an advance'); eq(r.game.players.host.shots.length,1,'mine hit appears in the owner\'s tracking shots');
+  });
+  test('mines: a rotation can sweep onto a mine; a stern entering a mine cripples', ()=>{
+    let g=localGame(35); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]);
+    g=Rules.layMine(g,'host',P(5,8)).game; // reverse: stern moves to 5,8
+    const r=Rules.maneuver(g,'guest',2,'reverse'); ok(r.ok,r.reason); eq(r.mineHits.length,1); ok(r.mineHits[0].crippled); eq(r.mineHits[0].crippledBy,'stern');
+    let g2=localGame(36); g2.players.guest.fleet=fleetWith([{cls:'battleship',x:5,y:2,h:'N'}]); g2=Rules.layMine(g2,'host',P(8,5)).game; // rotcw: bow swings to 8,5
+    const r2=Rules.maneuver(g2,'guest',1,'rotcw'); ok(r2.ok,r2.reason); eq(r2.mineHits.length,1); eq(r2.mineHits[0].cell,P(8,5)); ok(r2.ended,'rotation still ends the turn');
+  });
+  test('mines: fifth sinking by mine ends the game for the mine owner', ()=>{
+    let g=localGame(37); g.players.guest.fleet=fleetWith([{cls:'patrol',x:2,y:2,h:'W'}]);
+    // sink everything except the patrol's stern
+    const gf=g.players.guest.fleet; gf.forEach((s,i)=>{ if(i!==4){ s.hits=s.hits.map(()=>true); s.sunk=true; s.crippled=true; } }); gf[4].hits[0]=true; gf[4].crippled=true; gf[4].crippled=false; // keep patrol mobile for the test
+    g.players.host.shots=CLASS_ORDER.filter(c=>c!=='patrol').map((c,i)=>({turn:1,player:'host',kind:'shot',cell:P(i,9),result:'sunk',cls:c,footprint:Rules.shipCells(gf[CLASS_ORDER.indexOf(c)])}));
+    g=Rules.layMine(g,'host',P(1,2)).game; // patrol advance W: bow enters 1,2 ... stern-hit needed to sink: hits[0] true, entering section is bow (already hit) -> confirmed, not sunk
+    let r=Rules.maneuver(g,'guest',4,'advance'); ok(r.ok,r.reason); eq(r.mineHits[0].result,'confirmed');
+    // now a mine behind: reverse moves the undamaged stern into 3,2
+    g=r.game; g=Rules.fire(g,'guest',P(9,9)).game; g=Rules.layMine(g,'host',P(3,2)).game;
+    r=Rules.maneuver(g,'guest',4,'reverse'); ok(r.ok,r.reason); eq(r.mineHits[0].result,'sunk'); eq(r.game.winner,'host'); ok(r.ended);
+  });
+  test('mines: remote mine-hit report applied on the owner\'s device', ()=>{
+    let g=localGame(38); g=Rules.layMine(g,'host',P(5,3)).game; let a=Rules.clone(g); a.players.guest.fleet=null;
+    const r=Rules.applyRemoteMineHit(a,'host',{mineId:g.players.host.mines[0].id, cell:P(5,3), result:'hit', cls:'destroyer', crippled:false, crippledBy:null, footprint:null, turn:2});
+    ok(r.ok,r.reason); eq(r.game.players.host.shots[0].weapon,'mine'); ok(!r.game.players.host.mines[0].live); const again=Rules.applyRemoteMineHit(r.game,'host',{mineId:g.players.host.mines[0].id, cell:P(5,3), result:'hit', cls:'destroyer'}); ok(!again.ok,'a mine fires once');
+  });
+  test('radar: square size follows the scanning ship class and clamps to the board', ()=>{ eq(Rules.radarArea('carrier',P(8,8)),{x:5,y:5,size:5}); eq(Rules.radarArea('patrol',P(0,0)),{x:0,y:0,size:2}); eq(Rules.radarArea('destroyer',P(4,4)),{x:4,y:4,size:3}); eq(Rules.radarArea('battleship',P(9,0)),{x:6,y:0,size:4}); });
+  test('radar: lists enemy sections inside the square, needs an undamaged ship, uses the shot, cools down 8 turns', ()=>{
+    let g=localGame(39); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]);
+    let r=Rules.radar(g,'host',{shipIdx:0, anchor:P(4,4)}); ok(r.ok,r.reason); eq(r.area,{x:4,y:4,size:5}); const cs=r.contacts.filter(c=>c.cls==='destroyer'); eq(cs.length,3); eq(cs[0].heading,'N');
+    eq(r.game.current,'guest'); eq(r.game.players.guest.sightings[0].kind,'radar'); eq(Rules.weapon(r.game.players.host,'radar').cooldown,8); ok(!r.game.log.find(e=>e.kind==='radar').contacts,'contacts are not stored in the log');
+    let g2=localGame(40); g2.players.host.fleet=hitShip(g2.players.host.fleet,'carrier',[1]).fleet; const bad=Rules.radar(g2,'host',{shipIdx:0, anchor:P(0,0)}); ok(!bad.ok); ok(/undamaged/.test(bad.reason));
+    const small=Rules.radar(localGame(41),'host',{shipIdx:4, anchor:P(9,9)}); ok(small.ok); eq(small.area.size,2);
+  });
+  test('air strike: three cells in a line, each a full shot, undamaged carrier, once per game', ()=>{
+    let g=localGame(42); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]);
+    ok(!Rules.airstrike(g,'host',{cells:[P(5,5),P(5,6),P(6,7)]}).ok,'not a line');
+    let r=Rules.airstrike(g,'host',{cells:Rules.lineCells(P(5,5),false)}); ok(r.ok,r.reason); eq(r.results.map(x=>x.result),['hit','hit','sunk']); eq(r.game.players.guest.fleet[2].sunk,true);
+    eq(r.game.players.host.shots.length,3); eq(r.game.players.guest.sightings[0].kind,'airstrike'); eq(Rules.weapon(r.game.players.host,'airstrike').usesRemaining,0);
+    g=r.game; g=Rules.fire(g,'guest',P(9,9)).game; const again=Rules.airstrike(g,'host',{cells:Rules.lineCells(P(0,0),true)}); ok(!again.ok); ok(/left/.test(again.reason),again.reason);
+    let g2=localGame(43); g2.players.host.fleet=hitShip(g2.players.host.fleet,'carrier',[2]).fleet; ok(!Rules.airstrike(g2,'host',{cells:Rules.lineCells(P(0,0),true)}).ok);
+    eq(Rules.lineCells(P(9,9),true),[P(7,9),P(8,9),P(9,9)],'clamped to the board');
+  });
+  test('peg map: repeat shots keep a per-cell history count; grazes go stale after a sinking elsewhere', ()=>{
+    const shots=[{turn:1,cell:P(2,2),result:'miss'},{turn:3,cell:P(2,2),result:'miss'},{turn:5,cell:P(2,2),result:'hit',cls:'submarine'},{turn:7,cell:P(4,4),result:'graze',cls:'patrol'},{turn:9,cell:P(8,8),result:'sunk',cls:'patrol',footprint:[P(8,8),P(9,8)]}];
+    const pm=Rules.pegMap(shots); eq(pm.get('2,2').history.length,3); eq(pm.get('2,2').latest.result,'hit'); ok(pm.get('4,4').stale);
+  });
+  test('store: mines and weapon state survive a round trip; enemy mine cells are kept for resolution', ()=>{
+    Store.useMemoryBackend(); let g=localGame(44); g.mode='net'; g=Rules.layMine(g,'host',P(3,3)).game; g.players.guest.fleet=null;
+    ok(Store.save({room:'RT0002',role:'guest',mode:'net',name:'B',navy:'uk',game:g})); const back=Store.load('RT0002');
+    eq(back.game.players.host.mines[0].cell,P(3,3)); eq(Rules.weapon(back.game.players.host,'mine').usesRemaining,1); ok(back.game.players.host.fleet===null,'opponent fleet still never stored');
+  });
+
   function run(){
     const results=cases.map(c=>{ try{ c.fn(); return {name:c.name, pass:true, msg:'ok'}; }catch(e){ return {name:c.name, pass:false, msg:String(e&&e.message||e)}; } });
     return results;
