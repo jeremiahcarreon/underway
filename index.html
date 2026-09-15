@@ -1245,7 +1245,7 @@ const AI = (function(){
   function liveHits(shots){
     const sunk=new Set(shots.filter(s=>s.result===RESULT.SUNK).map(s=>s.cls));
     const latest=new Map(); shots.forEach(s=>latest.set(key(s.cell), s));
-    const out=[]; latest.forEach(s=>{ if((s.result===RESULT.HIT||s.result===RESULT.CONFIRMED) && s.cls && !sunk.has(s.cls)) out.push(s); });
+    const out=[]; latest.forEach(s=>{ if((s.result===RESULT.HIT||s.result===RESULT.CONFIRMED||s.result===RESULT.GRAZE) && s.cls && !sunk.has(s.cls)) out.push(s); });
     return out;
   }
   function lineAxis(cells){ if(cells.length<2) return null; const xs=new Set(cells.map(c=>c.x)), ys=new Set(cells.map(c=>c.y)); return xs.size===1?'y':ys.size===1?'x':null; }
