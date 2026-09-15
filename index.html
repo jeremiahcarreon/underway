@@ -363,7 +363,9 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
   </div>
   <div class="actions" id="actions">
     <span class="phase" id="phase-label">Maneuver phase</span>
-    <select id="ship-select" aria-label="Ship to maneuver"></select>
+    <div class="weapons" id="weapons"></div>
+    <span class="sub" id="weapon-desc"></span>
+    <select id="ship-select" aria-label="Ship to maneuver or fire from"></select>
     <button id="btn-advance" title="Every section moves one cell ahead. You still fire this turn.">Advance<small>1 cell · then fire</small></button>
     <button id="btn-reverse" title="Every section moves one cell astern. You still fire this turn.">Reverse<small>1 cell · then fire</small></button>
     <button id="btn-rotcw" title="Turns 90° clockwise about the stern (the stern cell stays put). Ends your turn — no shot.">Rotate ↻<small>pivot stern · ends turn</small></button>
@@ -371,6 +373,7 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
     <button id="btn-skip">Skip maneuver</button>
     <span class="spacer"></span>
     <span class="sub" id="target-label">No target</span>
+    <button class="small hidden" id="btn-airdir" title="Bomb line orientation">↔ line</button>
     <button class="fire" id="btn-fire" disabled>FIRE</button>
   </div>
 </section>
