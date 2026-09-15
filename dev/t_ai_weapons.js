@@ -1,7 +1,7 @@
 const {Browser,cellXY,waitFor,selectShip,URL}=require('./cdp.js'); const P=(x,y)=>({x,y});
 async function st(b){ return b.eval(`(()=>{const S=Underway.UI.S; return {cur:S.game.current, phase:S.game.phase, turn:S.game.turn, busy:S.busy, winner:S.game.winner, screen:S.screen};})()`); }
 async function settle(b){ for(let i=0;i<120;i++){ const s=await st(b); if(!s.busy && (s.cur==='host'||s.winner)) return s; await b.wait(150); if(i%4===3) await b.eval(`Underway.Anim.skip()`); } throw new Error('never settled'); }
-async function pickWeapon(b,id){ const i=['shell','mg','mine','radar','airstrike'].indexOf(id)+1; await b.click(`.weapons button:nth-child(${i})`); await b.wait(80); }
+async function pickWeapon(b,id){ const i=['shell','mg','torpedo','mine','radar','airstrike'].indexOf(id)+1; await b.click(`.weapons button:nth-child(${i})`); await b.wait(80); }
 async function tapEnemy(b,cell){ const xy=await cellXY(b,'enemy',cell); await b.clickCanvas('#enemyCanvas',xy.x,xy.y); await b.wait(60); }
 async function aiCells(b,idx){ return b.eval(`Underway.Rules.shipCells(Underway.UI.S.game.players.guest.fleet[${idx}])`); }
 async function run(mobile){
