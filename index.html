@@ -1121,8 +1121,15 @@ const Rules = (function(){
     const mine={id:remoteId||('m'+g.turn+pid), cell:{x:cell.x,y:cell.y}, turn:g.turn, live:true, hitTurn:null};
     gp.mines.push(mine); spendWeapon(gp,'mine');
     g.log.push({n:g.log.length, turn:g.turn, player:pid, kind:'mine', cell:{x:cell.x,y:cell.y}, mineId:mine.id});
+    // Laid straight onto an enemy section: it detonates at once (a standard hit; a wreck or burning section gives CONFIRMED).
+    let immediate=null; const dp=g.players[other(pid)];
+    if(dp.fleet && dp.fleet.some(sh=>sh.bow&&sectionAt(sh,cell)>=0)){
+      const res=resolveShot(dp.fleet, cell, g.turn); dp.fleet=res.fleet; mine.live=false; mine.hitTurn=g.turn;
+      immediate=recordShot(g, pid, cell, res, 'mine', {section:res.section, mineId:mine.id, immediate:true});
+    }
+    if(immediate && checkWin(g,pid)) return {ok:true, game:g, mine, immediate};
     endTurn(g);
-    return {ok:true, game:g, mine};
+    return {ok:true, game:g, mine, immediate};
   }
   // The mine owner's device (net): the defender reports that their move set off our mine.
   function applyRemoteMineHit(game, minerPid, p){
