@@ -1470,8 +1470,15 @@ const Sfx = (function(){
   }
   function fireLoop(on){
     if(!ready()) return;
-    if(on && !fireNode){ const n=noise(); const f=filt('bandpass',2600,1.2); const g=gain(0.0001,now()); const lfo=osc('square',11); const lg=gain(0.05,now()); lfo.connect(lg).connect(g.gain); g.gain.setTargetAtTime(0.07,now(),0.5); n.connect(f).connect(g).connect(master); n.start(); lfo.start(); fireNode={n,lfo,g}; }
-    else if(!on && fireNode){ const fn=fireNode; fireNode=null; fn.g.gain.setTargetAtTime(0.0001,now(),0.3); setTimeout(()=>{ try{ fn.n.stop(); fn.lfo.stop(); }catch(e){} },900); }
+    if(on && !fireNode){
+      // Quiet crackle: band-passed noise whose gain is flickered by a second, heavily low-passed noise source.
+      // Random by construction (never periodic): a square-wave LFO here produced an audible constant tick.
+      const n=noise(); const f=filt('bandpass',2400,1.4); const g=gain(0.0001,now());
+      const m=noise(); const mf=filt('lowpass',6,0.7); const mg=gain(1.6,now()); m.connect(mf).connect(mg).connect(g.gain);
+      g.gain.setTargetAtTime(0.03,now(),1.0);
+      n.connect(f).connect(g).connect(master); n.start(); m.start(); fireNode={n,m,g};
+    }
+    else if(!on && fireNode){ const fn=fireNode; fireNode=null; try{ fn.m.disconnect(); }catch(e){} fn.g.gain.cancelScheduledValues(now()); fn.g.gain.setTargetAtTime(0.0001,now(),0.3); setTimeout(()=>{ try{ fn.n.stop(); fn.m.stop(); }catch(e){} },900); }
   }
   function klaxon(){
     if(!ready()) return; const t=now();
