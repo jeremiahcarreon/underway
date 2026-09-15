@@ -2938,7 +2938,7 @@ const UI = (function(){
   async function checkTurn(){
     const g=S.game; if(g.winner){ onGameOver(); return; }
     if(S.mode==='ai'){ if(g.current==='guest'){ banner('Enemy fleet is maneuvering', true); setTimeout(aiTurn, 900*Anim.scale()+200); } else myTurnBanner(); return; }
-    if(S.mode==='hotseat'){ if(g.current!==S.viewAs){ hideBanner(); await curtain('Pass the device to '+g.players[g.current].name, 'Turn '+g.turn+'. Both oceans are hidden until the next admiral is ready.'); S.viewAs=g.current; S.target=null; S.selShip=firstMobileShip(); S.oceans.own.clearEffects(); S.oceans.enemy.clearEffects(); renderLog(); refreshBattle(); setTab('own'); } myTurnBanner(); return; }
+    if(S.mode==='hotseat'){ if(g.current!==S.viewAs){ hideBanner(); await curtain('Pass the device to '+g.players[g.current].name, 'Turn '+g.turn+'. Both oceans are hidden until the next admiral is ready.'); S.viewAs=g.current; S.target=null; S.targets=[]; S.weapon='shell'; S.selShip=firstMobileShip(); S.oceans.own.clearEffects(); S.oceans.enemy.clearEffects(); S.oceans.enemy.radarView=null; S.oceans.own.radarView=null; S.oceans.enemy.hoverArea=null; S.oceans.enemy.hoverLine=null; renderLog(); refreshBattle(); setTab('own'); } myTurnBanner(); return; }
     if(g.current===me()){ if(S.pendingFire){ S.pendingFire=null; } myTurnBanner(); } else banner('Enemy fleet is maneuvering', true);
   }
   function myTurnBanner(){ banner('Your turn, Admiral', false, 1800); Sfx.chime(); chat(S.game.players[me()].navy||'us','turnStart'); if(isMobile()) setTab('own'); }
