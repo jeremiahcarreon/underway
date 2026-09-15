@@ -2248,6 +2248,19 @@ const Anim = (function(){
     await wait(400);
     for(const i of sunkIdx){ const res=results[i]; const ship=opts.owner&&opts.fleet?opts.fleet[res.shipIdx]:null; await impact(o,cells[i],res,{owner:opts.owner, ship, shipIdx:res.shipIdx, navyId:opts.navyId, shakeEl:opts.shakeEl}); }
   }
+  // Torpedo run along a lane; stops at stopIndex with an impact (or a clear-lane splash at the exit).
+  async function playTorpedo(o, path, stopIndex, res, opts){
+    opts=opts||{}; const c=o.cell; const pts=path.map(cell=>o.cellCenter(cell)); const n=stopIndex+1; const dur=Math.max(500, 115*n+150); Sfx.torpedoRun(dur*scale());
+    const start={x:pts[0].x-(pts[1].x-pts[0].x)*1.2, y:pts[0].y-(pts[1].y-pts[0].y)*1.2}; const seg=n; 
+    fx(o,dur,(ctx,p)=>{ const f=p*seg; const i=Math.min(seg-1,Math.floor(f)); const t=f-i; const a=i===0?start:pts[i-1]; const b=pts[i]; const x=lerp(a.x,b.x,t), y=lerp(a.y,b.y,t);
+      ctx.strokeStyle='rgba(220,240,255,0.5)'; ctx.lineWidth=Math.max(2,c*0.12); ctx.setLineDash([c*0.15,c*0.12]); ctx.beginPath(); ctx.moveTo(start.x,start.y); for(let k=0;k<i;k++) ctx.lineTo(pts[k].x,pts[k].y); ctx.lineTo(x,y); ctx.stroke(); ctx.setLineDash([]);
+      for(let k=0;k<6;k++){ const bp=((p*8)+k/6)%1; const bx=x-(b.x-a.x)*bp*1.5, by=y-(b.y-a.y)*bp*1.5; ctx.strokeStyle='rgba(255,255,255,'+(0.5*(1-bp)).toFixed(2)+')'; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(bx+Math.sin(k*2.1)*c*0.12,by+Math.cos(k*1.7)*c*0.12,c*0.05+bp*c*0.06,0,TAU); ctx.stroke(); }
+      const ang=Math.atan2(b.y-a.y,b.x-a.x); ctx.save(); ctx.translate(x,y); ctx.rotate(ang); ctx.fillStyle='#22262e'; ctx.beginPath(); ctx.ellipse(0,0,c*0.22,c*0.08,0,0,TAU); ctx.fill(); ctx.fillStyle='#ffb347'; ctx.beginPath(); ctx.arc(-c*0.2,0,c*0.04,0,TAU); ctx.fill(); ctx.restore(); });
+    await wait(dur);
+    const cell=path[stopIndex];
+    if(res.result===RESULT.MISS){ Sfx.splash(); splash(o,cell,450); textPop(o,cell,'LANE CLEAR','#cfe3f5',1000); await wait(400); }
+    else await impact(o,cell,res,{owner:opts.owner, ship:opts.ship, shipIdx:opts.shipIdx, navyId:opts.navyId, shakeEl:opts.shakeEl});
+  }
   async function playMineLay(o, cell){ Sfx.splash(); const p0=o.cellCenter(cell), c=o.cell; fx(o,900,(ctx,p)=>{ ctx.strokeStyle='rgba(200,230,255,'+(0.6*(1-p)).toFixed(2)+')'; ctx.lineWidth=2; for(let k=0;k<3;k++){ const pp=Math.max(0,p-k*0.2); ctx.beginPath(); ctx.ellipse(p0.x,p0.y,pp*c*1.1,pp*c*0.8,0,0,TAU); ctx.stroke(); } }); textPop(o,cell,'MINE LAID','#cfe3f5',1100); await wait(700); }
   // Mine detonation. opts: {owner, ship (pre-hit ship on the owner's ocean), shipIdx, navyId, shakeEl}
   async function playMineHit(o, cell, shot, opts){
@@ -2320,7 +2333,7 @@ const Anim = (function(){
       Sfx.click(); requestAnimationFrame(frame);
     });
   }
-  return { settings, ease, scale, wait, skip, fx, run, busy, shake, playShot, playManeuver, playIllegal, sinking, coinFlip, splash, fireball, textPop, impact, playMG, playMineLay, playMineHit, playRadar, playAirstrike };
+  return { settings, ease, scale, wait, skip, fx, run, busy, shake, playShot, playManeuver, playIllegal, sinking, coinFlip, splash, fireball, textPop, impact, playMG, playMineLay, playMineHit, playRadar, playAirstrike, playTorpedo };
 })();
 
 /* ============================================================
