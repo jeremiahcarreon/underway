@@ -32,7 +32,7 @@ Every weapon replaces your shot for the turn. Pick it in the action bar, then ta
 | Shell | unlimited | One cell. | Nothing about you. |
 | Machine gun | reloads over 10 of your turns | Four bullets on any four cells, fired from a ship you choose. A ship takes **one** section of damage only if **two or more** bullets strike it; a lone bullet **grazes** (class revealed, no damage). | The firing ship's exact position and heading, marked on their tracking grid with the turn number. |
 | Torpedo | reloads over 8 of your turns; Submarine must be undamaged and must not have moved this turn | Runs a full row or column from the edge you choose. The first enemy section it reaches takes a standard hit (wrecks and burning sections stop it with a Confirmed); nothing behind it is touched. A clear run reports "lane clear". | Only the lane and direction (a wake on their ocean). The Submarine stays hidden. |
-| Mine | 2 per game | Laid on any enemy cell instead of firing. Hidden. It detonates as a **standard hit** (crippling rules apply) when an enemy section **moves onto** that cell. A mine under a ship stays dormant until a different section enters the cell. | Only that a mine was laid somewhere. When it detonates, you are told the cell and result. |
+| Mine | 2 per game | Laid on any enemy cell instead of firing. Hidden. It detonates as a **standard hit** (crippling rules apply) when an enemy section **moves onto** that cell, or **immediately** if you lay it right on a section (a wreck or burning section gives Confirmed and spends the mine). | Only that a mine was laid somewhere. When it detonates, you are told the cell and result. |
 | Radar sweep | reloads over 8 of your turns; scanning ship must be **undamaged** | A square sized by the scanning ship (Carrier 5×5, Battleship 4×4, Destroyer/Submarine 3×3, Patrol 2×2). Every enemy section inside is shown for five seconds, then vanishes; the log keeps only the contact count. | The scanning ship's exact position. |
 | Air strike | once per game; Carrier must be undamaged | Three bombs on three cells in a straight line; every bomb is a full shot. | The Carrier's exact position. |
 
@@ -63,7 +63,7 @@ Reloads count your own turns and tick down at the start of each of your turns. W
 21. Refresh either browser mid-battle: Resume restores fleet, pegs, turn and phase and reconnects; go offline briefly: "reconnecting…" then resumes with no lost messages.
 22. Sink the fifth ship: the game ends at once, each side plays its cinematic, the stats card matches the log, and the Reveal replay scrubs through every turn including the silent moves.
 23. Both press Rematch: back to the lobby, navies re-pickable, the loser fires first.
-24. Versus AI on Random, Hunter and Admiral each play to completion; on Admiral the log shows the AI re-firing a hit cell ("Confirmed"/"Miss") and its damaged ships moving between your shots.
+24. Versus AI on Random, Hunter and Admiral each play to completion; Random and Hunter keep a static fleet (as the brief specifies), Admiral (the default) re-fires hit cells to confirm and moves its damaged ships between your shots.
 25. Hotseat: a curtain hides both oceans between placement and every turn.
 26. `?test=1` shows every case PASS (58 cases).
 27. On a phone in portrait: no horizontal scrolling, cells at least 32 px, tabs switch oceans, tap a cell then tap FIRE.
