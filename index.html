@@ -3204,6 +3204,7 @@ const Replay = (function(){
     if(e.kind==='move'){ const verb={advance:'advanced',reverse:'reversed',rotcw:'rotated clockwise',rotccw:'rotated counter-clockwise'}[e.type]; return 'Turn '+e.turn+' · '+who+' '+verb+' '+SHIP_CLASSES[e.cls].name+' — a silent move ('+cellName(e.from.bow)+' '+e.from.heading+' → '+cellName(e.to.bow)+' '+e.to.heading+')'; }
     if(e.kind==='mine') return 'Turn '+e.turn+' · '+who+' laid a hidden mine at '+cellName(e.cell);
     if(e.kind==='radar'){ const a=e.area; return 'Turn '+e.turn+' · '+who+' radar sweep with the '+SHIP_CLASSES[e.cls].name+' over '+cellName({x:a.x,y:a.y})+'–'+cellName({x:a.x+a.size-1,y:a.y+a.size-1})+': '+e.count+' contact'+(e.count===1?'':'s'); }
+    if(e.weapon==='torpedo') return 'Turn '+e.turn+' · '+who+' torpedo along '+Rules.laneName(e.lane)+': '+(e.result===RESULT.MISS?'lane clear':Rules.resultText(e)+' at '+cellName(e.cell));
     const w=e.weapon&&e.weapon!=='shell'?({mg:'machine gun',mine:'mine',airstrike:'air strike'}[e.weapon]+' — '):'';
     return 'Turn '+e.turn+' · '+who+' '+(e.weapon==='mine'?'mine struck':'fired')+' at '+cellName(e.cell)+': '+w+Rules.resultText(e);
   }
