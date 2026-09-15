@@ -20,7 +20,22 @@ A two-player, browser-based naval combat game where the fleets can move. One sel
 14. **Fresh peer session.** If an opponent rejoins with a brand-new session (after Abandon), an in-progress battle cannot continue; both return to the lobby.
 15. **Third connection.** The guest peer id is fixed per room, so a third device cannot register it and sees "Room full".
 16. **Hotseat cinematic** plays the winner's view once for both players.
-17. **Seeded RNG.** Fleet templates, random fleets, AI, and the coin flip use a seeded generator; radio chatter picks use plain randomness because tests never depend on them.
+17. **Weapons.** Machine-gun bullets and air-strike bombs are recorded as individual shots (they count in shots fired and accuracy). A defender's device stores the opponent's mine positions because it must resolve movement silently; the UI never shows them. Radar contacts are never written to the log or the save. The AI uses shells only, but its moves set off your mines.
+18. **Seeded RNG.** Fleet templates, random fleets, AI, and the coin flip use a seeded generator; radio chatter picks use plain randomness because tests never depend on them.
+
+## Weapons (added after the first playtest, to shorten games)
+
+Every weapon replaces your shot for the turn. Pick it in the action bar, then tap the enemy grid.
+
+| Weapon | Cost / limit | What it does | What the enemy learns |
+|---|---|---|---|
+| Shell | unlimited | One cell. | Nothing about you. |
+| Machine gun | reloads over 10 of your turns | Four bullets on any four cells, fired from a ship you choose. A ship takes **one** section of damage only if **two or more** bullets strike it; a lone bullet **grazes** (class revealed, no damage). | The firing ship's exact position and heading, marked on their tracking grid with the turn number. |
+| Mine | 2 per game | Laid on any enemy cell instead of firing. Hidden. It detonates as a **standard hit** (crippling rules apply) when an enemy section **moves onto** that cell. A mine under a ship stays dormant until a different section enters the cell. | Only that a mine was laid somewhere. When it detonates, you are told the cell and result. |
+| Radar sweep | reloads over 8 of your turns; scanning ship must be **undamaged** | A square sized by the scanning ship (Carrier 5×5, Battleship 4×4, Destroyer/Submarine 3×3, Patrol 2×2). Every enemy section inside is shown for five seconds, then vanishes; the log keeps only the contact count. | The scanning ship's exact position. |
+| Air strike | once per game; Carrier must be undamaged | Three bombs on three cells in a straight line; every bomb is a full shot. | The Carrier's exact position. |
+
+Reloads count your own turns and tick down at the start of each of your turns. Weapon cooldowns, remaining uses, your own mines and every sighting are saved with the game.
 
 ## Manual test steps (Section 15 acceptance criteria)
 
