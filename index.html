@@ -2823,7 +2823,7 @@ const UI = (function(){
     const rd=Rules.weaponReady(g,me(),S.weapon); if(!rd.ok){ toast(rd.reason,'err'); Sfx.buzz(); return; }
     switch(S.weapon){
       case 'shell': if(S.target) return fireShell(S.target); break;
-      case 'mine': if(S.target) return doMine(S.target); break;
+      case 'mine': if(S.target){ const c=S.target; return enqueue(()=>doMine(c)); } break; // queued: the owner's MINE_HIT reply must not overtake the local commit
       case 'mg': return doMG(S.selShip, S.targets.slice());
       case 'radar': if(S.target) return doRadar(S.selShip, S.target); break;
       case 'airstrike': if(S.target) return doAirstrike(Rules.lineCells(S.target,S.airDir)); break;
