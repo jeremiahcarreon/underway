@@ -2357,7 +2357,7 @@ const UI = (function(){
     ['advance','reverse','rotcw','rotccw'].forEach(t=>{ const b=$('#btn-'+t); b.disabled=!man||!ship||!Rules.canMove(my.fleet,S.selShip,t).ok; if(ship&&man){ const r=Rules.canMove(my.fleet,S.selShip,t); b.title=r.ok?'':r.reason; } });
     $('#btn-skip').disabled=!man;
     $('#btn-fire').disabled=!(fire&&S.target); $('#target-label').textContent=S.target?'Target '+cellName(S.target):(myTurn?(g.phase==='fire'?'Tap an enemy cell':'Maneuver, or tap an enemy cell'):'Waiting…');
-    $('#phase-label').textContent=g.winner?'Battle over':!myTurn?'Enemy turn — '+(S.pendingFire?'shot in the air…':'waiting'):g.phase==='maneuver'?'Your turn · Maneuver phase (optional), then fire':'Your turn · Fire phase';
+    $('#phase-label').textContent=g.winner?'Battle over':!myTurn?'Enemy turn — '+(S.pendingFire?'shot in the air…':'waiting'):g.phase==='maneuver'?'Your turn · Maneuver (optional): Advance/Reverse then fire, or Rotate (pivots on the stern, ends the turn). Hover a button to preview.':'Your turn · Fire phase — pick a target on the enemy grid';
     $('#btn-surrender').disabled=!!g.winner;
   }
   function renderLog(){
@@ -2387,7 +2387,7 @@ const UI = (function(){
   function bindBattle(){
     $('#tab-own').addEventListener('click',()=>setTab('own')); $('#tab-enemy').addEventListener('click',()=>setTab('enemy'));
     $('#ship-select').addEventListener('change',e=>{ S.selShip=parseInt(e.target.value,10)||0; refreshBattle(); });
-    ['advance','reverse','rotcw','rotccw'].forEach(t=>$('#btn-'+t).addEventListener('click',()=>doManeuver(t)));
+    ['advance','reverse','rotcw','rotccw'].forEach(t=>{ const b=$('#btn-'+t); b.addEventListener('click',()=>{ clearPreview(); doManeuver(t); }); b.addEventListener('mouseenter',()=>previewMove(t)); b.addEventListener('focus',()=>previewMove(t)); b.addEventListener('mouseleave',clearPreview); b.addEventListener('blur',clearPreview); });
     $('#btn-skip').addEventListener('click',()=>{ Sfx.unlock(); const r=Rules.skipManeuver(S.game,me()); if(!r.ok){ toast(r.reason,'err'); return; } S.game=r.game; Sfx.click(); save(); refreshBattle(); if(isMobile()) setTab('enemy'); });
     $('#btn-fire').addEventListener('click',()=>{ if(S.target) doFire(S.target); });
     $('#btn-copy2').addEventListener('click',copyLink); $('#btn-share2').addEventListener('click',shareLink);
@@ -2395,6 +2395,18 @@ const UI = (function(){
     document.addEventListener('keydown',e=>{ if(S.screen!=='battle') return; if(e.key==='Escape'&&Anim.busy()) Anim.skip(); if(e.key==='Enter'&&S.target&&!$('#btn-fire').disabled) doFire(S.target); });
     $('#banner').addEventListener('click',()=>{ if(Anim.busy()) Anim.skip(); });
   }
+  // Hovering a maneuver button shows a ghost of where the ship would end up (and the stern pivot for rotations).
+  const MOVE_LABEL={advance:'Advance',reverse:'Reverse',rotcw:'Rotate clockwise',rotccw:'Rotate counter-clockwise'};
+  function previewMove(type){
+    const g=S.game, own=S.oceans.own; if(!g||!own||g.current!==me()||g.phase!=='maneuver'||S.busy||g.winner) return;
+    const fleet=g.players[me()].fleet; const ship=fleet&&fleet[S.selShip]; if(!ship||!ship.bow||ship.sunk) return;
+    const r=Rules.canMove(fleet,S.selShip,type); const rot=type==='rotcw'||type==='rotccw';
+    own.ghost=r.ok?r.ship:Rules.movedShip(ship,type); own.ghostOk=r.ok; own.pivot=rot?Rules.sternCell(ship):null;
+    const stern=cellName(Rules.sternCell(ship));
+    $('#phase-label').textContent=MOVE_LABEL[type]+' — '+SHIP_CLASSES[ship.cls].name+(rot?': swings 90° about its stern at '+stern+' (the stern stays put). Rotating ENDS YOUR TURN: no shot.':': every section moves one cell '+(type==='advance'?'ahead':'astern')+'; you still fire this turn.')+(r.ok?'':'  ✖ Illegal: '+r.reason);
+    S.previewing=true;
+  }
+  function clearPreview(){ const own=S.oceans.own; if(!own) return; own.ghost=null; own.pivot=null; if(S.previewing){ S.previewing=false; renderActions(); } }
   async function doManeuver(type){
     Sfx.unlock(); const g=S.game; if(S.busy) return; const pid=me(); const idx=S.selShip; const fleet=g.players[pid].fleet;
     const can=Rules.canMove(fleet, idx, type);
