@@ -3521,6 +3521,7 @@ const Tests = (function(){
     const r=Rules.radar(g,'host',{ship:{cls:'destroyer',bow:P(5,5),heading:'N'}, anchor:P(0,0)}); ok(r.ok,r.reason); eq(r.area.size,3); eq(r.game.players.guest.sightings[0].cells.length,3);
     let g2=localGame(46); g2.players.host.fleet=null; const a=Rules.airstrike(g2,'host',{ship:{cls:'carrier',bow:P(2,2),heading:'S'}, cells:Rules.lineCells(P(0,0),true)}); ok(a.ok,a.reason); eq(a.results.length,3);
     let g3=localGame(47); g3.players.host.fleet=null; const m=Rules.fireMG(g3,'host',{ship:{cls:'patrol',bow:P(1,1),heading:'W'}, cells:[P(0,0),P(1,0),P(2,0),P(3,0)]}); ok(m.ok,m.reason);
+    let g4=localGame(52); g4.players.host.fleet=null; const t=Rules.torpedo(g4,'host',{lane:{axis:'row',index:8,dir:1}}); ok(t.ok,'defender resolves a remote torpedo: '+t.reason); eq(t.game.players.guest.torpedoes.length,1);
   });
   test('air strike: three cells in a line, each a full shot, undamaged carrier, once per game', ()=>{
     let g=localGame(42); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]);
