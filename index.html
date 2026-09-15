@@ -1776,7 +1776,7 @@ const Render = (function(){
   /* ---------- Ocean ---------- */
   function createOcean(canvas, opts){
     opts=opts||{};
-    const o={ canvas, ctx:canvas.getContext('2d'), kind:opts.kind||'own', cell:32, margin:20, dpr:1, w:0, h:0, effects:[], hover:null, target:null, targets:[], area:null, hoverArea:null, hoverLine:null, mines:[], sightings:[], radarView:null, selected:-1, ghost:null, ghostOk:true, pivot:null,
+    const o={ canvas, ctx:canvas.getContext('2d'), kind:opts.kind||'own', cell:32, margin:20, dpr:1, w:0, h:0, effects:[], hover:null, target:null, targets:[], area:null, hoverArea:null, hoverLine:null, mines:[], sightings:[], radarView:null, wakes:[], lane:null, selected:-1, ghost:null, ghostOk:true, pivot:null,
               fleet:null, navyId:null, pegs:null, turn:1, hideShips:false, shipFx:{}, hideWreckCls:null, listen:true, reduced:false, static:false };
     o.resize=function(){
       const rect=canvas.getBoundingClientRect(); const cssW=Math.max(200, rect.width||canvas.clientWidth||560);
@@ -1984,6 +1984,18 @@ const Render = (function(){
       ctx.font='bold '+Math.max(8,Math.round(c*0.22))+'px system-ui,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; const label={mg:'MG FIRE',radar:'RADAR',airstrike:'LAUNCH'}[sg.kind]+' T'+sg.turn; const tw=ctx.measureText(label).width+8;
       ctx.fillStyle='rgba(10,10,14,0.75)'; ctx.fillRect(p.x-tw/2,p.y-c*0.16,tw,c*0.32); ctx.fillStyle='#ffe08a'; ctx.fillText(label,p.x,p.y); });
   }
+  function laneLine(ctx, o, path, stopIndex, alpha, width){
+    const c=o.cell; const pts=path.slice(0,stopIndex+1).map(cell=>o.cellCenter(cell)); if(pts.length<2) return;
+    ctx.save(); ctx.globalAlpha=alpha; ctx.strokeStyle='#cfe3f5'; ctx.lineWidth=width; ctx.setLineDash([c*0.25,c*0.18]); ctx.beginPath(); pts.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y)); ctx.stroke(); ctx.setLineDash([]);
+    const a=pts[pts.length-1], b=pts[pts.length-2]; const ang=Math.atan2(a.y-b.y,a.x-b.x); ctx.fillStyle='#cfe3f5'; ctx.beginPath(); ctx.moveTo(a.x+Math.cos(ang)*c*0.3,a.y+Math.sin(ang)*c*0.3); ctx.lineTo(a.x+Math.cos(ang+2.5)*c*0.3,a.y+Math.sin(ang+2.5)*c*0.3); ctx.lineTo(a.x+Math.cos(ang-2.5)*c*0.3,a.y+Math.sin(ang-2.5)*c*0.3); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  // Torpedo wakes: the lane a torpedo ran (defender's ocean) or that you fired (tracking grid). Latest two, fading with age.
+  function drawWakes(o){
+    if(!o.wakes||!o.wakes.length) return; const ctx=o.ctx, c=o.cell;
+    o.wakes.slice(-2).forEach(w=>{ const age=(o.turn||1)-w.turn; const alpha=Math.max(0.2,0.8-age*0.12); laneLine(ctx,o,w.path,w.stopIndex,alpha,Math.max(2,c*0.08));
+      const p0=o.cellCenter(w.path[0]); ctx.save(); ctx.globalAlpha=alpha; ctx.font='bold '+Math.max(8,Math.round(c*0.22))+'px system-ui,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; const label='TORPEDO T'+w.turn; const tw=ctx.measureText(label).width+8; ctx.fillStyle='rgba(10,10,14,0.75)'; ctx.fillRect(p0.x-tw/2,p0.y-c*0.5-c*0.1,tw,c*0.3); ctx.fillStyle='#cfe3f5'; ctx.fillText(label,p0.x,p0.y-c*0.5+c*0.05); ctx.restore(); });
+  }
   function drawRadarView(o, now){
     const ctx=o.ctx, c=o.cell; const rv=o.radarView; if(!rv) return;
     const left=rv.until-now; if(left<=0){ o.radarView=null; return; }
@@ -2000,7 +2012,8 @@ const Render = (function(){
     const areaBox=(area,fill,stroke)=>{ const r=o.cellRect({x:area.x,y:area.y}); ctx.fillStyle=fill; ctx.fillRect(r.x,r.y,area.size*c,area.size*c); ctx.strokeStyle=stroke; ctx.lineWidth=2; ctx.setLineDash([6,4]); ctx.strokeRect(r.x+1,r.y+1,area.size*c-2,area.size*c-2); ctx.setLineDash([]); };
     if(o.hoverArea) areaBox(o.hoverArea,'rgba(62,207,142,0.08)','rgba(62,207,142,0.5)');
     if(o.area) areaBox(o.area,'rgba(62,207,142,0.16)','#3ecf8e');
-    if(o.hoverLine){ o.hoverLine.forEach(cell=>{ const r=o.cellRect(cell); ctx.fillStyle='rgba(255,90,74,0.12)'; ctx.fillRect(r.x,r.y,r.w,r.h); }); }
+    if(o.hoverLine){ o.hoverLine.forEach(cell=>{ const r=o.cellRect(cell); ctx.fillStyle='rgba(255,90,74,0.12)'; ctx.fillRect(r.x,r.y,r.w,r.h); }); if(o.hoverLine.length===SIZE) laneLine(ctx,o,o.hoverLine,SIZE-1,0.45,2); }
+    if(o.lane){ o.lane.forEach(cell=>{ const r=o.cellRect(cell); ctx.fillStyle='rgba(255,90,74,0.2)'; ctx.fillRect(r.x,r.y,r.w,r.h); }); laneLine(ctx,o,o.lane,o.lane.length-1,0.95,Math.max(2,c*0.09)); }
     if(o.targets&&o.targets.length){ o.targets.forEach((cell,i)=>{ const p=o.cellCenter(cell); ctx.strokeStyle='#ff5a4a'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(p.x,p.y,c*0.34,0,TAU); ctx.stroke(); ctx.fillStyle='#ff5a4a'; ctx.font='bold '+Math.round(c*0.3)+'px system-ui,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(String(i+1),p.x,p.y+1); }); }
     if(o.pivot){ const p=o.cellCenter(o.pivot); ctx.strokeStyle='#ffb347'; ctx.lineWidth=3; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.arc(p.x,p.y,c*0.44,0,TAU); ctx.stroke(); ctx.setLineDash([]); ctx.fillStyle='#ffb347'; ctx.beginPath(); ctx.arc(p.x,p.y,c*0.08,0,TAU); ctx.fill(); ctx.font='bold '+Math.max(8,Math.round(c*0.24))+'px system-ui,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.lineWidth=3; ctx.strokeStyle='rgba(0,0,0,0.85)'; ctx.strokeText('PIVOT',p.x,p.y+c*0.72); ctx.fillText('PIVOT',p.x,p.y+c*0.72); }
     if(o.hover){ const r=o.cellRect(o.hover); ctx.strokeStyle='rgba(255,179,71,0.9)'; ctx.lineWidth=2; ctx.strokeRect(r.x+1,r.y+1,r.w-2,r.h-2); }
@@ -2010,7 +2023,7 @@ const Render = (function(){
     const ctx=o.ctx; ctx.setTransform(o.dpr,0,0,o.dpr,0,0); const t=now||performance.now();
     drawWater(o,t); drawGrid(o);
     if(o.pegs) drawPegs(o,o.pegs,t);
-    drawMines(o); drawSightings(o,t);
+    drawMines(o); drawSightings(o,t); drawWakes(o);
     if(o.fleet && !o.hideShips){
       o.fleet.forEach((s,i)=>{ if(!s.bow) return; const fx=o.shipFx[i]; if(fx&&fx.hidden) return; drawShipTop(o,s,o.navyId,t,{selected:o.selected===i,turn:o.turn,sinkP:fx&&fx.sinkP!=null?fx.sinkP:null,sinkBowFirst:fx?fx.bowFirst:false,offset:fx?fx.offset:null,angleOffset:fx?fx.angleOffset:0}); });
     }
