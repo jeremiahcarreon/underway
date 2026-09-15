@@ -41,5 +41,5 @@ async function settleBoth(att, def){ for(let i=0;i<120;i++){ const a=await st(at
   const obb=await cellsOf(def,1); const obs=await shipOf(def,1); const horiz=(obs.heading==='E'||obs.heading==='W'); await pickWeapon(att,'airstrike'); if(horiz!==await att.eval(`Underway.UI.S.airDir`)) await att.click('#btn-airdir'); const anchor=obb.slice().sort((p,q)=>p.x-q.x||p.y-q.y)[0]; await tapEnemy(att,anchor); await att.click('#btn-fire'); [a,d]=await settleBoth(att,def);
   console.log('AIRSTRIKE: results', await att.eval(`JSON.stringify(Underway.UI.S.game.players[Underway.UI.S.role].shots.filter(x=>x.weapon==='airstrike').map(x=>x.result))`), '| def battleship hits:', JSON.stringify((await shipOf(def,1)).hits), '| def sightings', d.mySightings, '| turn', a.turn, a.cur, void isHost);
   console.log('HOST ERRORS:', H.errors.length?H.errors:'none'); console.log('GUEST ERRORS:', G.errors.length?G.errors:'none'); console.log('warns:', H.logs.concat(G.logs).filter(l=>/warn/.test(l)).slice(0,6));
-  H.close(); G.close();
+  H.close(); G.close(); try{ srv.kill('SIGKILL'); }catch(e){} setTimeout(()=>process.exit(0),300);
 })().catch(e=>{ console.error('HARNESS', e); process.exit(1); });
