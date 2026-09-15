@@ -3082,18 +3082,19 @@ const Replay = (function(){
   function build(g){
     // Merge every event (moves from both sides + shots) in order of turn, then move-before-shot.
     const evs=g.log.slice();
-    const order={move:0,shot:1};
+    const order={move:0,mine:1,radar:1,shot:2};
     evs.sort((a,b)=>a.turn-b.turn||order[a.kind]-order[b.kind]||(a.n||0)-(b.n||0));
     return evs;
   }
   function stateAt(k){
     if(cache[k]) return cache[k];
-    let base = k>0 ? stateAt(k-1) : { fleets:{host:Rules.clone(game.players.host.initialFleet||[]), guest:Rules.clone(game.players.guest.initialFleet||[])}, shots:{host:[],guest:[]} };
-    const st={fleets:{host:Rules.clone(base.fleets.host),guest:Rules.clone(base.fleets.guest)}, shots:{host:base.shots.host.slice(),guest:base.shots.guest.slice()}};
+    let base = k>0 ? stateAt(k-1) : { fleets:{host:Rules.clone(game.players.host.initialFleet||[]), guest:Rules.clone(game.players.guest.initialFleet||[])}, shots:{host:[],guest:[]}, mines:{host:[],guest:[]} };
+    const st={fleets:{host:Rules.clone(base.fleets.host),guest:Rules.clone(base.fleets.guest)}, shots:{host:base.shots.host.slice(),guest:base.shots.guest.slice()}, mines:{host:Rules.clone(base.mines.host),guest:Rules.clone(base.mines.guest)}};
     if(k>0){
       const e=events[k-1];
       if(e.kind==='move'){ const f=st.fleets[e.player]; if(f[e.ship]&&f[e.ship].bow){ f[e.ship].bow=Rules.clone(e.to.bow); f[e.ship].heading=e.to.heading; } }
-      else if(e.kind==='shot'){ const def=Rules.other(e.player); const f=st.fleets[def]; if(f.length){ const r=Rules.resolveShot(f,e.cell,e.turn); st.fleets[def]=r.fleet; } st.shots[e.player].push(e); }
+      else if(e.kind==='mine'){ st.mines[e.player].push({cell:e.cell, turn:e.turn, live:true}); }
+      else if(e.kind==='shot'){ const def=Rules.other(e.player); const f=st.fleets[def]; if(f.length&&e.result!==RESULT.GRAZE){ const r=Rules.resolveShot(f,e.cell,e.turn); st.fleets[def]=r.fleet; } st.shots[e.player].push(e); if(e.weapon==='mine'){ const m=st.mines[e.player].find(x=>x.live&&x.cell.x===e.cell.x&&x.cell.y===e.cell.y); if(m) m.live=false; } }
     }
     cache[k]=st; return st;
   }
@@ -3101,12 +3102,15 @@ const Replay = (function(){
     if(k===0) return 'Start of battle. Drag the slider or press play to watch every turn, including the silent moves.';
     const e=events[k-1]; const p=game.players[e.player]; const who=p.name+' ('+navy(p.navy).name+')';
     if(e.kind==='move'){ const verb={advance:'advanced',reverse:'reversed',rotcw:'rotated clockwise',rotccw:'rotated counter-clockwise'}[e.type]; return 'Turn '+e.turn+' · '+who+' '+verb+' '+SHIP_CLASSES[e.cls].name+' — a silent move ('+cellName(e.from.bow)+' '+e.from.heading+' → '+cellName(e.to.bow)+' '+e.to.heading+')'; }
-    return 'Turn '+e.turn+' · '+who+' fired at '+cellName(e.cell)+': '+Rules.resultText(e);
+    if(e.kind==='mine') return 'Turn '+e.turn+' · '+who+' laid a hidden mine at '+cellName(e.cell);
+    if(e.kind==='radar'){ const a=e.area; return 'Turn '+e.turn+' · '+who+' radar sweep with the '+SHIP_CLASSES[e.cls].name+' over '+cellName({x:a.x,y:a.y})+'–'+cellName({x:a.x+a.size-1,y:a.y+a.size-1})+': '+e.count+' contact'+(e.count===1?'':'s'); }
+    const w=e.weapon&&e.weapon!=='shell'?({mg:'machine gun',mine:'mine',airstrike:'air strike'}[e.weapon]+' — '):'';
+    return 'Turn '+e.turn+' · '+who+' '+(e.weapon==='mine'?'mine struck':'fired')+' at '+cellName(e.cell)+': '+w+Rules.resultText(e);
   }
   function render(){
     const st=stateAt(pos);
-    oceanA.fleet=st.fleets.host; oceanA.navyId=game.players.host.navy; oceanA.pegs=Rules.pegMap(st.shots.guest); oceanA.turn=pos>0?events[pos-1].turn:1;
-    oceanB.fleet=st.fleets.guest; oceanB.navyId=game.players.guest.navy; oceanB.pegs=Rules.pegMap(st.shots.host); oceanB.turn=oceanA.turn;
+    oceanA.fleet=st.fleets.host; oceanA.navyId=game.players.host.navy; oceanA.pegs=Rules.pegMap(st.shots.guest); oceanA.turn=pos>0?events[pos-1].turn:1; oceanA.mines=st.mines.guest;
+    oceanB.fleet=st.fleets.guest; oceanB.navyId=game.players.guest.navy; oceanB.pegs=Rules.pegMap(st.shots.host); oceanB.turn=oceanA.turn; oceanB.mines=st.mines.host;
     if(pos>0){ const e=events[pos-1]; if(e.kind==='shot'){ (e.player==='host'?oceanB:oceanA).target=e.cell; (e.player==='host'?oceanA:oceanB).target=null; } else { oceanA.target=null; oceanB.target=null; (e.player==='host'?oceanA:oceanB).selected=e.ship; (e.player==='host'?oceanB:oceanA).selected=-1; } }
     else { oceanA.target=oceanB.target=null; oceanA.selected=oceanB.selected=-1; }
     if(pos>0 && events[pos-1].kind==='shot'){ oceanA.selected=-1; oceanB.selected=-1; }
