@@ -1580,7 +1580,7 @@ const Render = (function(){
   /* ---------- Ocean ---------- */
   function createOcean(canvas, opts){
     opts=opts||{};
-    const o={ canvas, ctx:canvas.getContext('2d'), kind:opts.kind||'own', cell:32, margin:20, dpr:1, w:0, h:0, effects:[], hover:null, target:null, selected:-1, ghost:null, ghostOk:true,
+    const o={ canvas, ctx:canvas.getContext('2d'), kind:opts.kind||'own', cell:32, margin:20, dpr:1, w:0, h:0, effects:[], hover:null, target:null, selected:-1, ghost:null, ghostOk:true, pivot:null,
               fleet:null, navyId:null, pegs:null, turn:1, hideShips:false, shipFx:{}, hideWreckCls:null, listen:true, reduced:false, static:false };
     o.resize=function(){
       const rect=canvas.getBoundingClientRect(); const cssW=Math.max(200, rect.width||canvas.clientWidth||560);
@@ -1754,19 +1754,25 @@ const Render = (function(){
       ctx.save(); if(stale) ctx.globalAlpha=0.45;
       if(s.result===RESULT.MISS){ ctx.fillStyle='rgba(230,242,255,0.92)'; ctx.beginPath(); ctx.arc(p.x,p.y,r*0.62,0,TAU); ctx.fill(); ctx.strokeStyle='rgba(120,170,210,0.9)'; ctx.lineWidth=1; ctx.stroke(); }
       else {
-        ctx.fillStyle=cover?'#5a1e1e':'#e0453b'; ctx.beginPath(); ctx.arc(p.x,p.y,r,0,TAU); ctx.fill();
-        ctx.strokeStyle=stale?'#ffb3ad':'#ffd5d0'; ctx.lineWidth=stale?1.5:1; if(stale) ctx.setLineDash([3,3]); ctx.stroke(); ctx.setLineDash([]);
+        const graze=s.result===RESULT.GRAZE;
+        ctx.fillStyle=graze?'rgba(224,69,59,0.28)':cover?'#5a1e1e':'#e0453b'; ctx.beginPath(); ctx.arc(p.x,p.y,r,0,TAU); ctx.fill();
+        ctx.strokeStyle=graze?'#ffb347':stale?'#ffb3ad':'#ffd5d0'; ctx.lineWidth=graze?2:stale?1.5:1; if(stale) ctx.setLineDash([3,3]); ctx.stroke(); ctx.setLineDash([]);
         if(s.cls){ ctx.fillStyle=ICON_COLORS[s.cls]; ctx.font='bold '+Math.round(c*0.36)+'px system-ui,sans-serif'; ctx.fillText(SHIP_CLASSES[s.cls].icon,p.x,p.y+1); }
         if(s.result===RESULT.CONFIRMED){ ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(p.x-r*0.9,p.y+r*0.75); ctx.lineTo(p.x-r*0.5,p.y+r*1.05); ctx.lineTo(p.x+r*0.1,p.y+r*0.45); ctx.stroke(); }
         if(s.crippled){ ctx.fillStyle='#ffb347'; ctx.beginPath(); ctx.arc(p.x+r*0.8,p.y-r*0.8,r*0.32,0,TAU); ctx.fill(); }
       }
       // turn stamp
       ctx.font='bold '+Math.max(7,Math.round(c*0.22))+'px system-ui,sans-serif'; ctx.fillStyle='rgba(255,255,255,0.95)'; ctx.strokeStyle='rgba(0,0,0,0.8)'; ctx.lineWidth=2.5; const tx=p.x+c*0.5-c*0.16, ty=p.y+c*0.5-c*0.14; ctx.strokeText(String(s.turn),tx,ty); ctx.fillText(String(s.turn),tx,ty);
+      // repeat-shot count: rings plus a ×N badge on cells fired on more than once
+      const nrep=e.history.length;
+      if(nrep>1){ ctx.strokeStyle='rgba(255,255,255,0.7)'; ctx.lineWidth=1; const base=s.result===RESULT.MISS?r*0.62:r; for(let k=1;k<Math.min(nrep,4);k++){ ctx.beginPath(); ctx.arc(p.x,p.y,base+k*c*0.07,0,TAU); ctx.stroke(); }
+        ctx.fillStyle='#ffe08a'; const bx=p.x-c*0.5+c*0.17, by=p.y-c*0.5+c*0.15; ctx.strokeText('×'+nrep,bx,by); ctx.fillText('×'+nrep,bx,by); }
       ctx.restore();
     });
   }
   function drawHighlights(o){
     const ctx=o.ctx, c=o.cell;
+    if(o.pivot){ const p=o.cellCenter(o.pivot); ctx.strokeStyle='#ffb347'; ctx.lineWidth=3; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.arc(p.x,p.y,c*0.44,0,TAU); ctx.stroke(); ctx.setLineDash([]); ctx.fillStyle='#ffb347'; ctx.beginPath(); ctx.arc(p.x,p.y,c*0.08,0,TAU); ctx.fill(); ctx.font='bold '+Math.max(8,Math.round(c*0.24))+'px system-ui,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.lineWidth=3; ctx.strokeStyle='rgba(0,0,0,0.85)'; ctx.strokeText('PIVOT',p.x,p.y+c*0.72); ctx.fillText('PIVOT',p.x,p.y+c*0.72); }
     if(o.hover){ const r=o.cellRect(o.hover); ctx.strokeStyle='rgba(255,179,71,0.9)'; ctx.lineWidth=2; ctx.strokeRect(r.x+1,r.y+1,r.w-2,r.h-2); }
     if(o.target){ const p=o.cellCenter(o.target); ctx.strokeStyle='#ff5a4a'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(p.x,p.y,c*0.36,0,TAU); ctx.stroke(); ctx.beginPath(); ctx.moveTo(p.x-c*0.5,p.y); ctx.lineTo(p.x-c*0.2,p.y); ctx.moveTo(p.x+c*0.2,p.y); ctx.lineTo(p.x+c*0.5,p.y); ctx.moveTo(p.x,p.y-c*0.5); ctx.lineTo(p.x,p.y-c*0.2); ctx.moveTo(p.x,p.y+c*0.2); ctx.lineTo(p.x,p.y+c*0.5); ctx.stroke(); }
   }
