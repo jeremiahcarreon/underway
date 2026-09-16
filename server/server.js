@@ -208,9 +208,9 @@ wss.on('connection', ws => {
       ctx = { code, role, admiral: a }; const s = slot(code); if (s[role] && s[role] !== ws) { try { s[role].close(4000, 'replaced by a newer connection'); } catch (e) { } } s[role] = ws;
       const st = q.state.get(code, role); const lastSeqIn = st ? st.last_seq_in : 0;
       const pending = q.pending.all(code, role, lastSeqIn).map(r => ({ seq: r.seq, from: r.from_role, type: r.type, payload: safeParse(r.payload), ts: r.ts }));
-      const opp = s[other(role)]; const g2 = q.game.get(code);
-      sendTo(ws, { type: 'WELCOME', role, game: publicGame(g2), blob: st && st.blob ? safeParse(st.blob) : null, lastSeqIn, pending, opponentOnline: !!(opp && opp.readyState === 1), serverTime: now() });
-      sendTo(opp, { type: 'PRESENCE', opponentOnline: true });
+      const opp = s[other(role)]; const g2 = q.game.get(code); const pg = publicGame(g2);
+      sendTo(ws, { type: 'WELCOME', role, game: pg, blob: st && st.blob ? safeParse(st.blob) : null, lastSeqIn, pending, opponentOnline: !!(opp && opp.readyState === 1), opponentName: role === 'host' ? pg.guest : pg.host, serverTime: now() });
+      sendTo(opp, { type: 'PRESENCE', opponentOnline: true, opponentName: a.name });
       return;
     }
     if (!ctx) { sendTo(ws, { type: 'ERROR', error: 'Say HELLO first' }); return; }
@@ -225,7 +225,7 @@ wss.on('connection', ws => {
     if (m.type === 'SAVE') { try { q.upsertState.run(code, role, m.lastSeqIn || 0, JSON.stringify(m.blob === undefined ? null : m.blob), now()); sendTo(ws, { type: 'SAVED', lastSeqIn: m.lastSeqIn || 0 }); } catch (e) { sendTo(ws, { type: 'ERROR', error: 'save failed: ' + e.message }); } return; }
     if (m.type === 'ACK') { try { q.upsertState.run(code, role, m.lastSeqIn || 0, q.state.get(code, role) ? q.state.get(code, role).blob : null, now()); } catch (e) { } return; }
   });
-  ws.on('close', () => { if (!ctx) return; const s = slot(ctx.code); if (s[ctx.role] === ws) { s[ctx.role] = null; sendTo(s[other(ctx.role)], { type: 'PRESENCE', opponentOnline: false }); } });
+  ws.on('close', () => { if (!ctx) return; const s = slot(ctx.code); if (s[ctx.role] === ws) { s[ctx.role] = null; sendTo(s[other(ctx.role)], { type: 'PRESENCE', opponentOnline: false, opponentName: ctx.admiral.name }); } });
 });
 server.listen(PORT, () => console.log('UNDERWAY server on http://0.0.0.0:' + PORT + '  data: ' + DATA_DIR));
 process.on('SIGTERM', () => { server.close(); process.exit(0); });
