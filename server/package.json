@@ -1,0 +1,10 @@
+{
+  "name": "underway-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "UNDERWAY game server: durable relay, game codes, replays, leaderboard (Node + SQLite)",
+  "main": "server.js",
+  "scripts": { "start": "node --no-warnings=ExperimentalWarning server.js", "test": "node --no-warnings=ExperimentalWarning ../dev/test-server.js" },
+  "engines": { "node": ">=22.13" },
+  "dependencies": { "ws": "^8.18.0" }
+}
