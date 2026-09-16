@@ -252,16 +252,38 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
       <div class="tag">NAVAL COMBAT WHERE THE FLEETS MOVE</div>
     </div>
     <div class="card">
+      <h3>Play online</h3>
+      <div id="signin-panel">
+        <div class="grid2">
+          <div class="field"><label for="adm-name">Admiral name</label><input type="text" id="adm-name" maxlength="18" autocomplete="username" placeholder="e.g. Nelson"></div>
+          <div class="field"><label for="adm-pin">PIN (4–8 digits)</label><input type="password" id="adm-pin" inputmode="numeric" maxlength="8" autocomplete="current-password" placeholder="••••"></div>
+        </div>
+        <button class="primary" id="btn-signin" style="width:100%">Sign in / create Admiral</button>
+        <div class="sub" style="margin-top:6px">A new name with a PIN creates your Admiral; the same name later needs the same PIN. Games, replays and your record live on the server, so any device with the game code gets you back into a battle.</div>
+      </div>
+      <div id="online-panel" class="hidden">
+        <div class="row" style="margin-bottom:8px"><span>Signed in as <b id="adm-label"></b></span><span class="spacer"></span><button class="small" id="btn-signout">Sign out</button></div>
+        <div class="grid2">
+          <button class="primary" id="btn-newgame">New game</button>
+          <button id="btn-join-toggle">Join with code</button>
+        </div>
+        <div id="join-panel" class="hidden" style="margin-top:8px">
+          <div class="row"><input type="text" id="join-code" maxlength="6" placeholder="GAME CODE" style="text-transform:uppercase;font-family:var(--mono);letter-spacing:.2em"><button class="primary" id="btn-join">Join</button></div>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button class="small" id="btn-mygames">My games</button>
+          <button class="small" id="btn-leaderboard">Leaderboard</button>
+          <button class="small" id="btn-replaycode">Watch a replay</button>
+        </div>
+        <div id="mygames" class="hidden" style="margin-top:8px"></div>
+      </div>
+      <div class="sub err" id="online-note" style="margin-top:6px"></div>
+    </div>
+    <div class="card" style="margin-top:10px">
+      <h3>Solo &amp; local</h3>
       <div class="field"><label for="home-name">Your name, Admiral</label><input type="text" id="home-name" maxlength="18" placeholder="Admiral" autocomplete="off"></div>
-      <div class="grid2">
-        <button class="primary" id="btn-create">Create battle</button>
-        <button id="btn-join-toggle">Join battle</button>
-      </div>
-      <div id="join-panel" class="hidden" style="margin-top:8px">
-        <div class="row"><input type="text" id="join-code" maxlength="6" placeholder="ROOM CODE" style="text-transform:uppercase;font-family:var(--mono);letter-spacing:.2em"><button class="primary" id="btn-join">Join</button></div>
-      </div>
-      <div id="resume-panel" class="hidden" style="margin-top:8px">
-        <button id="btn-resume-last" style="width:100%">Resume last battle <span id="resume-last-code" class="roomcode" style="font-size:14px"></span></button>
+      <div id="resume-panel" class="hidden" style="margin-bottom:8px">
+        <button id="btn-resume-last" style="width:100%">Resume solo game <span id="resume-last-code" class="roomcode" style="font-size:14px"></span></button>
       </div>
       <h3 style="margin-top:16px">Solo &amp; local</h3>
       <div class="row" style="margin-bottom:8px">
@@ -281,7 +303,7 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
         <a class="sub" href="?test=1">Run self-tests</a>
       </div>
     </div>
-    <div class="footer">Ships move. Damage travels. Hit the stern. Build v1 · PeerJS is the only external dependency.</div>
+    <div class="footer">Ships move. Damage travels. Hit the stern. Build v2 · no external dependencies · online play through the UNDERWAY server.</div>
   </div>
 </section>
 
@@ -291,7 +313,7 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
     <div class="card">
       <div class="row">
         <div class="col" style="gap:2px">
-          <span class="sub">ROOM</span>
+          <span class="sub">GAME CODE</span>
           <span class="roomcode" id="lobby-code">------</span>
         </div>
         <button class="small" id="btn-copy">Copy link</button>
@@ -431,6 +453,18 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
       <span id="rp-pos" class="sub" style="min-width:70px;text-align:right">0 / 0</span>
     </div>
     <div class="replayinfo" id="rp-info"></div>
+  </div>
+</section>
+
+<!-- ================= LEADERBOARD ================= -->
+<section id="screen-board" class="screen">
+  <div class="center" style="max-width:900px">
+    <div class="row"><h2 style="margin:0">Leaderboard</h2><span class="spacer"></span><button class="small" id="btn-board-back">Home</button></div>
+    <div class="sub" id="board-sub" style="margin:6px 0 10px"></div>
+    <h3>Admirals</h3>
+    <div style="overflow-x:auto"><table class="tests" id="board-admirals"><thead><tr><th>#</th><th>Admiral</th><th>Wins</th><th>Losses</th><th>Win %</th><th>Accuracy</th><th>Fastest win</th><th>Best navy</th></tr></thead><tbody></tbody></table></div>
+    <h3 style="margin-top:14px">Navies</h3>
+    <div style="overflow-x:auto"><table class="tests" id="board-navies"><thead><tr><th>Navy</th><th>Games</th><th>Wins</th><th>Best Admiral</th></tr></thead><tbody></tbody></table></div>
   </div>
 </section>
 
