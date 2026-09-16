@@ -2508,7 +2508,7 @@ const UI = (function(){
     try{ const r=await api('/api/admiral','POST',{name,pin}); saveAdmiral({name:r.name, token:r.token}); S.settings.name=r.name; Store.saveSettings(S.settings); $('#adm-pin').value=''; Sfx.confirm(); toast(r.created?'Welcome aboard, Admiral '+r.name+'.':'Welcome back, Admiral '+r.name+'.','',2600); renderHome(); const pend=S.pendingJoin; S.pendingJoin=null; if(pend) joinGame(pend); }
     catch(e){ toast(e.message,'err',3600); Sfx.buzz(); }
   }
-  async function newGame(){ try{ Sfx.confirm(); const r=await api('/api/games','POST',{token:S.admiral.token}); startNet('host', r.code); }catch(e){ toast(e.message,'err',3600); } }
+  async function createOnlineGame(){ try{ Sfx.confirm(); const r=await api('/api/games','POST',{token:S.admiral.token}); startNet('host', r.code); }catch(e){ toast(e.message,'err',3600); } }
   async function joinGame(code, opts){
     code=String(code||'').trim().toUpperCase(); if(code.length!==6){ toast('Enter the 6-character game code.','err'); Sfx.buzz(); return; }
     if(!S.admiral){ S.pendingJoin=code; showScreen('home'); renderHome(); $('#join-code').value=code; toast('Sign in first — then you join game '+code+' automatically.','',4000); return; }
@@ -2540,7 +2540,7 @@ const UI = (function(){
     $('#btn-signin').addEventListener('click',()=>{ Sfx.unlock(); signIn(); });
     $('#adm-pin').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#btn-signin').click(); });
     $('#btn-signout').addEventListener('click',()=>{ saveAdmiral(null); renderHome(); });
-    $('#btn-newgame').addEventListener('click',()=>{ Sfx.unlock(); newGame(); });
+    $('#btn-newgame').addEventListener('click',()=>{ Sfx.unlock(); createOnlineGame(); });
     $('#btn-join-toggle').addEventListener('click',()=>{ Sfx.unlock(); $('#join-panel').classList.toggle('hidden'); $('#join-code').focus(); });
     $('#btn-join').addEventListener('click',()=>{ Sfx.unlock(); joinGame($('#join-code').value); });
     $('#join-code').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#btn-join').click(); });
