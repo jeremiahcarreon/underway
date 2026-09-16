@@ -1,0 +1,14 @@
+services:
+  underway:
+    build: .
+    image: underway:latest
+    container_name: underway
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8931:8931"   # loopback only; expose via cloudflared or your Caddy reverse proxy
+    volumes:
+      - underway-data:/data      # SQLite database: games, replays, admirals, leaderboard
+    environment:
+      - PORT=8931
+volumes:
+  underway-data:
