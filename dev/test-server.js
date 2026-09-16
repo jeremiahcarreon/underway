@@ -32,12 +32,12 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   // guest saves with lastSeqIn=1, disconnects; host sends two more; guest reconnects and gets exactly the two pending
   b.send({type:'SAVE',lastSeqIn:1,blob:{game:{stage:'lobby',mine:'bob'}}}); await b.next(m=>m.type==='SAVED'); b.close(); await sleep(200);
   const pb=await a.next(m=>m.type==='PRESENCE'); check(pb.opponentOnline===false,'host told guest went offline');
-  a.send({type:'SEND',id:'c2',msg:{type:'NAVY_PICK',payload:{navy:'uk'}},blob:{game:{stage:'lobby'}},lastSeqIn:0}); await a.next(m=>m.type==='SENT');
+  a.send({type:'SEND',id:'c2',msg:{type:'LOBBY_STATE',payload:{hostNavy:'us',guestNavy:'uk',stage:'placement'}},blob:{game:{stage:'placement'}},lastSeqIn:0}); await a.next(m=>m.type==='SENT');
   a.send({type:'SEND',id:'c3',msg:{type:'START',payload:{seed:5,first:'guest'}},blob:{game:{stage:'battle'}},lastSeqIn:0}); await a.next(m=>m.type==='SENT');
   b=await connect(g.code,B.token); check(b.welcome.lastSeqIn===1&&b.welcome.pending.length===2&&b.welcome.pending[0].seq===2&&b.welcome.pending[1].msg===undefined&&b.welcome.pending[1].type==='START','guest resumes with saved blob cursor and the two pending messages', {last:b.welcome.lastSeqIn, pending:b.welcome.pending.map(p=>p.seq+':'+p.type)});
   check(b.welcome.blob&&b.welcome.blob.game.mine==='bob','guest gets its saved blob back');
   check((await get('/api/games/'+g.code)).body.status==='live','START marked the game live');
-  check((await get('/api/games/'+g.code)).body.guestNavy==='uk','navy recorded from NAVY_PICK');
+  check((await get('/api/games/'+g.code)).body.guestNavy==='uk','navies recorded from LOBBY_STATE');
   // a second host connection replaces the first
   const a2=await connect(g.code,A.token); await sleep(150); check(a.ws.readyState===3||a.ws.readyState===2,'older host socket closed when a newer one connects'); a=a2;
   // game over from both, with stats
