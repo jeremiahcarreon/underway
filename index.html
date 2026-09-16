@@ -2728,22 +2728,22 @@ const UI = (function(){
     const ship=(my.fleet||[])[S.selShip];
     ['advance','reverse','rotcw','rotccw'].forEach(t=>{ const b=$('#btn-'+t); b.disabled=!man||!ship||!Rules.canMove(my.fleet,S.selShip,t).ok; if(ship&&man){ const r=Rules.canMove(my.fleet,S.selShip,t); if(!r.ok) b.title=r.reason; } });
     $('#btn-skip').disabled=!man;
-    $('#btn-airdir').classList.toggle('hidden',w!=='airstrike'); $('#btn-airdir').textContent=S.airDir?'↔ line':'↕ line';
-    $('#btn-torpdir').classList.toggle('hidden',w!=='torpedo'); $('#btn-torpdir').textContent=LANE_MODES[S.torpDir%4].label;
+    $('#btn-airdir').classList.toggle('hidden',w!=='airstrike'); $('#btn-airdir').textContent=S.airDir?'Line: ↔ horizontal':'Line: ↕ vertical';
+    $('#btn-torpdir').classList.toggle('hidden',w!=='torpedo'); $('#btn-torpdir').textContent='Lane: '+LANE_MODES[S.torpDir%4].label;
     let ready=false, label='';
     const fs=fireShip();
     if(w==='shell'){ ready=!!S.target; label=S.target?'Target '+cellName(S.target):'Tap an enemy cell'; }
     else if(w==='mine'){ ready=!!S.target; label=S.target?'Mine at '+cellName(S.target):'Tap a cell to mine'; }
     else if(w==='mg'){ ready=S.targets.length===WEAPONS.mg.bullets; label='Bullets '+S.targets.length+'/'+WEAPONS.mg.bullets+(fs?' from '+SHIP_CLASSES[fs.cls].name:'')+(ready?'':' — tap cells'); }
     else if(w==='radar'){ const okShip=fs&&fs.bow&&!fs.sunk&&Rules.hitCount(fs)===0; ready=!!S.target&&okShip; label=!okShip?'Pick an undamaged ship':(S.target?'Sweep '+areaName(Rules.radarArea(fs.cls,S.target))+' ('+SHIP_CLASSES[fs.cls].name+' '+SHIP_CLASSES[fs.cls].size+'×'+SHIP_CLASSES[fs.cls].size+')':'Tap the corner of the '+SHIP_CLASSES[fs.cls].size+'×'+SHIP_CLASSES[fs.cls].size+' square'); }
-    else if(w==='airstrike'){ ready=!!S.target; const line=S.target?Rules.lineCells(S.target,S.airDir):null; label=line?'Bombs '+cellName(line[0])+'–'+cellName(line[2]):'Tap the first cell of the bomb line'; }
-    else if(w==='torpedo'){ const ss=subStatus(); ready=!!S.target&&!ss; label=ss?('Torpedo unavailable: '+ss):(S.target?'Torpedo along '+Rules.laneName(laneFor(S.target)):'Tap any cell in the lane; the button sets direction'); }
+    else if(w==='airstrike'){ ready=!!S.target; const line=S.target?Rules.lineCells(S.target,S.airDir):null; label=line?'Bombs '+cellName(line[0])+'–'+cellName(line[2])+(S.airDir?' (horizontal)':' (vertical)')+' — tap again to flip':'Tap the first cell of the bomb line; the Line button or a second tap flips ↔/↕'; }
+    else if(w==='torpedo'){ const ss=subStatus(); ready=!!S.target&&!ss; label=ss?('Torpedo unavailable: '+ss):(S.target?'Torpedo along '+Rules.laneName(laneFor(S.target))+' — tap again to change direction':'Tap any cell in the lane; the Lane button or a second tap changes direction'); }
     if(!myTurn) label='Waiting…';
     $('#btn-fire').textContent=FIRE_LABEL[w]; $('#btn-fire').disabled=!(fire&&ready&&Rules.weaponReady(g,me(),w).ok); $('#target-label').textContent=label;
     $('#phase-label').textContent=g.winner?'Battle over':!myTurn?'Enemy turn — '+(S.pendingFire?'waiting for the enemy report…':'waiting'):g.phase==='maneuver'?'Your turn · Maneuver (optional): Advance/Reverse then fire, or Rotate (pivots on the stern, ends the turn). Hover a button to preview.':'Your turn · Fire phase — choose a weapon and a target on the enemy grid';
     $('#btn-surrender').disabled=!!g.winner;
   }
-  function shortRes(s){ const cn=s.cls?SHIP_CLASSES[s.cls].name:''; return {miss:'miss',hit:'HIT '+cn+(s.crippled?' (crippled)':''),confirmed:'confirmed '+cn,sunk:'SUNK '+cn,graze:'grazed '+cn}[s.result]||s.result; }
+  function shortRes(s){ const cn=s.cls?SHIP_CLASSES[s.cls].name:''; return {miss:'miss',hit:'HIT '+cn+(s.crippled?' (crippled)':''),confirmed:(s.moved?'burning '+cn+' — MOVED here':'confirmed '+cn+' still here'),sunk:'SUNK '+cn,graze:'grazed '+cn}[s.result]||s.result; }
   function renderLog(){
     const box=$('#log'); box.innerHTML=''; const g=S.game; const chats=S.chatLog.slice(); let ci=0; const over=g.stage==='over';
     for(let idx=0; idx<g.log.length; idx++){
@@ -2782,6 +2782,8 @@ const UI = (function(){
   function selectTarget(cell){
     const g=S.game; if(g.current!==me()||g.winner||S.busy||S.pendingFire) return;
     if(S.weapon==='mg'){ const k=cellKey(cell); const i=S.targets.findIndex(c=>cellKey(c)===k); if(i>=0) S.targets.splice(i,1); else { if(S.targets.length>=WEAPONS.mg.bullets){ Sfx.buzz(); toast('Four bullets only — tap a numbered cell to remove it.','err',1600); return; } S.targets.push(cell); } }
+    else if(S.target&&S.target.x===cell.x&&S.target.y===cell.y&&S.weapon==='airstrike'){ S.airDir=!S.airDir; }
+    else if(S.target&&S.target.x===cell.x&&S.target.y===cell.y&&S.weapon==='torpedo'){ S.torpDir=(S.torpDir+1)%4; }
     else S.target=(S.target&&S.target.x===cell.x&&S.target.y===cell.y&&S.weapon!=='shell')?null:cell;
     Sfx.click(); syncTargets(); renderActions();
   }
@@ -2906,7 +2908,7 @@ const UI = (function(){
     const cn=shot.cls?SHIP_CLASSES[shot.cls].name:'';
     if(shot.result===RESULT.MISS){ toast('Torpedo ran the lane: clear','miss',2000); chat(an,'miss'); }
     else if(shot.result===RESULT.HIT){ toast('Torpedo hit: '+cn+'!'+(shot.crippled?' Crippled: dead in the water':''),'hit',2600); chat(an, shot.crippled?'hitCrippled':'hit', {cls:cn, ship:shipLabel(defender,shot.cls)}); }
-    else if(shot.result===RESULT.CONFIRMED){ toast('Torpedo struck wreckage: '+cn+' still there','hit',2200); chat(an,'confirmed',{cls:cn, ship:shipLabel(defender,shot.cls)}); }
+    else if(shot.result===RESULT.CONFIRMED){ toast('Torpedo: '+Rules.resultText(shot),'hit',2600); chat(an, shot.moved?'moved':'confirmed', {cls:cn, ship:shipLabel(defender,shot.cls)}); }
     else if(shot.result===RESULT.SUNK){ toast('Torpedo sank the '+cn+'!','sunk',3000); chat(an,'sunkEnemy',{cls:cn, ship:shipLabel(defender,shot.cls)}); chat(dn,'sunkOwn',{cls:cn, ship:shipLabel(defender,shot.cls)}); }
     if(!mine) toast('Enemy torpedo ran '+Rules.laneName(shot.lane)+' — the wake is marked on your ocean','',3200);
   }
@@ -2963,7 +2965,7 @@ const UI = (function(){
     appendLog(mine?'me':'them',(mine?'You':g.players[attacker].name)+' fired at '+cellName(shot.cell)+': '+Rules.resultText(shot), shot.turn);
     if(shot.result===RESULT.MISS){ toast('Miss','miss',1600); chat(an,'miss'); }
     else if(shot.result===RESULT.HIT){ toast('Hit: '+cn+'!'+(shot.crippled?' Crippled: dead in the water':''),'hit',2400); chat(an, shot.crippled?'hitCrippled':'hit', {cls:cn, ship:shipName}); }
-    else if(shot.result===RESULT.CONFIRMED){ toast('Confirmed: '+cn+' still here','hit',2000); chat(an,'confirmed',{cls:cn, ship:shipName}); }
+    else if(shot.result===RESULT.CONFIRMED){ toast(Rules.resultText(shot),'hit',2600); chat(an, shot.moved?'moved':'confirmed', {cls:cn, ship:shipName}); }
     else if(shot.result===RESULT.SUNK){ toast('Sunk: '+cn+'!','sunk',3000); chat(an,'sunkEnemy',{cls:cn, ship:shipName}); chat(dn,'sunkOwn',{cls:cn, ship:shipName}); }
   }
   function afterAction(){ save(); if(S.screen!=='battle') return; refreshBattle(); checkTurn(); }
