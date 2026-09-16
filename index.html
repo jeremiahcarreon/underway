@@ -3520,27 +3520,11 @@ const Tests = (function(){
   });
 
   /* --- net channel --- */
-  test('channel: in-order delivery, ack, dedupe of retransmits', ()=>{
-    let now=0; const wireAB=[], wireBA=[]; const gotB=[], gotA=[];
-    const a=new Net.Channel({send:e=>wireAB.push(JSON.parse(JSON.stringify(e))), onMessage:(t,p)=>gotA.push(t+':'+JSON.stringify(p)), now:()=>now, timeout:1000});
-    const b=new Net.Channel({send:e=>wireBA.push(JSON.parse(JSON.stringify(e))), onMessage:(t,p)=>gotB.push(t+':'+JSON.stringify(p)), now:()=>now, timeout:1000});
-    a.send('FIRE',{cell:'A1'}); a.send('FIRE',{cell:'B2'});
-    const dup=JSON.parse(JSON.stringify(wireAB[0]));
-    wireAB.splice(0).forEach(e=>b.receive(e)); b.receive(dup); b.receive(dup);
-    eq(gotB,['FIRE:{"cell":"A1"}','FIRE:{"cell":"B2"}']); eq(b.stats.dupes,2);
-    wireBA.splice(0).forEach(e=>a.receive(e)); eq(a.outbox.length,0,'acked');
-    // loss: drop the first of two messages, the second is buffered until the retransmit arrives
-    a.send('X',1); a.send('Y',2); const lost=wireAB.shift(); wireAB.splice(0).forEach(e=>b.receive(e)); eq(gotB.length,2,'Y buffered');
-    now=1500; a.tick(); ok(wireAB.length>=1,'retransmitted'); wireAB.splice(0).forEach(e=>b.receive(e)); eq(gotB.slice(2),['X:1','Y:2']); ok(lost.seq===3);
-    eq(b.lastSeqIn,4);
-    // unreliable frames never consume seq
-    a.send('PING',null); eq(wireAB[wireAB.length-1].seq,0);
-    // resync: remote reports what it has; everything after is resent
-    wireBA.splice(0); a.send('Z',3); wireAB.splice(0); a.resendFrom(b.lastSeqIn); eq(wireAB.length,1); eq(wireAB[0].type,'Z');
-  });
-  test('channel: snapshot/restore keeps seq counters and outbox', ()=>{
-    const a=new Net.Channel({send:()=>{}}); a.send('A',1); a.send('B',2); const snap=JSON.parse(JSON.stringify(a.snapshot()));
-    const b=new Net.Channel({send:()=>{}}); b.restore(snap); eq(b.seqOut,2); eq(b.outbox.length,2); eq(b.outbox[1].env.type,'B');
+  test('net: reliable outbox acks by client id and the inbound cursor rejects duplicates and flags gaps', ()=>{
+    const r=new Net.Reliable(); const a=r.queue('FIRE',{cell:'A1'}); const b=r.queue('FIRE',{cell:'B2'}); eq(r.outbox.length,2); ok(a.id!==b.id);
+    ok(r.acked(a.id)); eq(r.outbox.length,1); ok(!r.acked('nope'));
+    eq(r.accept(1),'ok'); eq(r.accept(1),'dup'); eq(r.accept(2),'ok'); eq(r.accept(4),'gap'); eq(r.lastSeqIn,2); eq(r.accept('x'),'bad');
+    const snap=JSON.parse(JSON.stringify(r.snapshot())); const r2=new Net.Reliable(); r2.restore(snap); eq(r2.lastSeqIn,2); eq(r2.outbox.length,1); eq(r2.outbox[0].type,'FIRE'); eq(r2.outbox[0].payload.cell,'B2');
   });
 
   /* --- persistence --- */
