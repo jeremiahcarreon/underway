@@ -1,6 +1,31 @@
 # UNDERWAY
 
-A two-player, browser-based naval combat game where the fleets can move. One self-contained `index.html`; the only external dependency is PeerJS from a CDN. Open the file from `file://` or any static host. Append `?test=1` to run the rules-engine self-test suite. By default players find each other through the public PeerJS signaling server; to use your own PeerJS server (`npx peer --port 9000`), open the game once with `?peer=host:port` (or `?peer=https://host/path`) and the setting is remembered.
+A two-player, browser-based naval combat game where the fleets can move. The whole client is one self-contained `index.html` with no external dependencies; solo (versus AI) and hotseat play work straight from `file://`. Append `?test=1` to run the rules-engine self-test suite.
+
+**Online play runs through the UNDERWAY server** (`server/`, Node 22 + SQLite, one container). The server relays moves, stores every message and each player's latest state, mints single-use game codes, keeps replays under those codes forever, and holds the leaderboard. A closed tab, a dead link, a reboot or a new device never loses a game: sign in with your Admiral name and PIN, enter the code, and you are back at the exact turn.
+
+## Running the server
+
+```
+docker compose up -d --build      # serves the game on http://127.0.0.1:8931
+```
+Data (games, replays, admirals) lives in the `underway-data` volume as one SQLite file. Without Docker: `cd server && npm install && npm start` (env `PORT`, `DATA_DIR`).
+
+Expose it however you like: a Cloudflare quick tunnel (`dev/tunnel.sh` prints a public URL), or a reverse proxy such as Caddy:
+```
+underway.example.com {
+    reverse_proxy 127.0.0.1:8931
+}
+```
+WebSockets pass through Caddy and Cloudflare without extra configuration.
+
+## Playing online
+
+1. Open the served page, enter an Admiral name and a 4–8 digit PIN. A new name creates the Admiral; the same name later needs the same PIN.
+2. **New game** mints a game code. Share the code or the link (`?g=CODE`). The first other Admiral to join becomes the guest; anyone else is refused.
+3. Codes are single-use: after the battle the code only serves the replay. **Rematch** (host starts it) mints a fresh code and the guest joins it automatically; the loser fires first.
+4. **My games** lists your open, live and finished games with Resume / Replay. **Leaderboard** ranks Admirals overall and per navy. **Watch a replay** takes any finished code, signed in or not.
+5. If the page is opened from `file://` the online section is hidden; `?server=http://host:port` points a file-opened copy at a server for development.
 
 ## Rule interpretations (where the brief was silent or ambiguous)
 
@@ -18,8 +43,8 @@ A two-player, browser-based naval combat game where the fleets can move. One sel
 12. **Coin flip.** The host draws a seed; both clients derive the first player from the same seed and animate the same flip. Rematches skip the flip (loser fires first) and show a banner instead.
 13. **Rematch** needs both players to press Rematch; the host then resets the room to the lobby with navies re-pickable.
 14. **Surrender** ends the game for both sides via a GAME_OVER message; both still exchange history so the replay works.
-15. **Fresh peer session.** If an opponent rejoins with a brand-new session (after Abandon), an in-progress battle cannot continue; both return to the lobby.
-16. **Third connection.** The guest peer id is fixed per room, so a third device cannot register it and sees "Room full".
+15. **Server relay.** Each side is still authoritative over its own ocean (the server never sends one player's fleet to the other), but the server stores both players' latest views and every message with per-direction sequence numbers, and replays whatever a rejoining player has not yet acknowledged. Your own ships never leave your device except to your saved state on your own server.
+16. **Third connection.** A game has exactly two Admirals; a third sign-in trying the code is refused. A player can be connected from only one tab at a time (a newer connection replaces the older).
 17. **Hotseat cinematic** plays the winner's view once for both players.
 18. **Weapons.** Machine-gun bullets and air-strike bombs are recorded as individual shots (they count in shots fired and accuracy). A defender's device stores the opponent's mine positions because it must resolve movement silently; the UI never shows them. Radar contacts are never written to the log or the save. The AI uses shells only, but its moves set off your mines.
 19. **Seeded RNG.** Fleet templates, random fleets, AI, and the coin flip use a seeded generator; radio chatter picks use plain randomness because tests never depend on them.
@@ -42,7 +67,7 @@ Reloads count your own turns and tick down at the start of each of your turns. W
 ## Manual test steps (Section 15 acceptance criteria)
 
 1. Open `index.html` from disk and from a static host with DevTools open: no console errors.
-2. Host: Create battle. Guest (other device): open the shared link, enter a name, Join. Both see the lobby with the room code.
+2. Host: sign in, New game. Guest (other device): sign in, open the shared link or type the game code, Join. Both see the lobby with the code.
 3. Host picks Japan; guest sees Japan marked TAKEN. Guest picks Japan at the same instant (or before the lobby update lands): guest gets "That navy is taken by the host" and must re-pick; Random navy picks from the rest.
 4. Placement: tap a ship, tap a cell (bow), tap the ship again to cycle heading, drag to move. Try placing over another ship or off the edge: refused with reason. Random fleet, Perimeter, Cluster, Spread all place a legal fleet; adjust one, press Ready.
 5. Both screens play the same coin flip and land on the same navy; the named player has the first turn.
@@ -63,7 +88,7 @@ Reloads count your own turns and tick down at the start of each of your turns. W
 20. Play through a turn with sound: cannon, whistle, splash, explosion, klaxon, engine rumble, sinking, bugle/taps, UI sounds. Change volume and mute, reload: settings persist.
 21. Refresh either browser mid-battle: Resume restores fleet, pegs, turn and phase and reconnects; go offline briefly: "reconnecting…" then resumes with no lost messages.
 22. Sink the fifth ship: the game ends at once, each side plays its cinematic, the stats card matches the log, and the Reveal replay scrubs through every turn including the silent moves.
-23. Both press Rematch: back to the lobby, navies re-pickable, the loser fires first.
+23. Host presses Rematch: a new code is minted, the guest joins it automatically, navies are re-pickable, the loser fires first; the old code serves the replay.
 24. Versus AI on Random, Hunter and Admiral each play to completion; Random and Hunter keep a static fleet (as the brief specifies), Admiral (the default) re-fires hit cells to confirm and moves its damaged ships between your shots.
 25. Hotseat: a curtain hides both oceans between placement and every turn.
 26. `?test=1` shows every case PASS (58 cases).
