@@ -130,6 +130,11 @@ h3{font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.12
 .weapons button{min-height:40px;padding:4px 10px;font-size:12.5px;line-height:1.05}
 .weapons button.selected{background:var(--accent);color:#1a1200;font-weight:700}
 .weapons button small{display:block;font-size:10px;font-weight:400;opacity:.75;margin-top:2px}
+.weapons button.wpn{position:relative}
+.weapons button.wpn.gone{opacity:.5;padding-right:26px}
+.weapons button.wpn.gone::after{content:"";position:absolute;right:5px;top:50%;margin-top:-8px;width:16px;height:16px;border:2.5px solid var(--danger);border-radius:50%;box-sizing:border-box;background:linear-gradient(135deg,transparent 40%,var(--danger) 40%,var(--danger) 60%,transparent 60%)}
+.weapons button.wpn.reloading{opacity:.6}
+.weapons button.wpn.reloading small{color:var(--accent)}
 .weapons .wgroup{display:inline-flex;align-items:stretch}
 .weapons .wgroup button.wpn{border-radius:8px 0 0 8px}
 .weapons .wgroup button.help{border-radius:0 8px 8px 0;border-left:none;min-width:30px;padding:4px 8px;font-size:13px;font-weight:700;color:var(--accent2)}
