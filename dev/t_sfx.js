@@ -1,0 +1,5 @@
+const {Browser,URL}=require('./cdp.js');
+(async()=>{ const b=new Browser({}); await b.launch(); await b.goto(URL); await b.wait(500);
+  console.log(await b.eval(`(()=>{ const S=Underway.Sfx; S.unlock(); const out=[]; ['cannon','whistle','splash','explosion','puff','machineGun','mineBlast','radarPing','jets','torpedoRun','klaxon','engine','sinking','bugle','taps','click','confirm','buzz','chime'].forEach(k=>{ try{ S[k](500,true); out.push(k); }catch(e){ out.push(k+':ERR '+e.message); } }); return 'sounds ok: '+out.join(', ')+' | fireLoop gone: '+(typeof S.fireLoop==='undefined'); })()`));
+  await b.eval(`document.getElementById('home-name').value='T'`); await b.click('#btn-ai'); await b.wait(150); await b.click('.navybtn:nth-child(1)'); await b.click('#btn-lobby-start'); await b.wait(150); await b.click('#btn-random-fleet'); await b.click('#btn-ready'); await b.wait(4500);
+  console.log('battle reached:', await b.eval(`Underway.UI.S.screen`), '| ERRORS:', b.errors.length?b.errors:'none'); b.close(); })();
