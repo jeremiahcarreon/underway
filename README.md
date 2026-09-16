@@ -7,21 +7,22 @@ A two-player, browser-based naval combat game where the fleets can move. One sel
 1. **Turn numbering.** One global counter increments at every hand-off (turn 1 = first player's first turn, turn 2 = second player's first turn). Pegs, logs, stats and the replay all use this number.
 2. **Firing without maneuvering.** Choosing a target and pressing Fire during the maneuver phase forfeits the maneuver; the explicit "Skip maneuver" button does the same.
 3. **Move legality checks destination cells only.** A rotation's swept cells are not checked, and a ship may overlap the cells it is leaving.
-4. **Wrecks and CONFIRMED.** Firing on a cell of an already-sunk ship reports CONFIRMED ("still here") with no new damage, because that section was already hit.
-5. **Patrol Boat crippling.** Any hit cripples it (threshold 1); a stern hit is attributed to the stern rule, a bow hit to the threshold rule.
-6. **Crippling and sinking on the same shot** report SUNK, not "crippled".
-7. **Own-ocean pegs.** The defender's ocean shows every enemy shot as a faint peg. This gives the defender exactly the same stale information the attacker holds and never reveals anything new.
-8. **Accuracy** counts HIT and SUNK shots; CONFIRMED costs a shot but is not a hit.
-9. **MVP ship** ranks by turns survived while damaged, then shots absorbed (hits plus confirmations).
-10. **Longest chase** is measured per class from first hit turn to sinking turn.
-11. **Coin flip.** The host draws a seed; both clients derive the first player from the same seed and animate the same flip. Rematches skip the flip (loser fires first) and show a banner instead.
-12. **Rematch** needs both players to press Rematch; the host then resets the room to the lobby with navies re-pickable.
-13. **Surrender** ends the game for both sides via a GAME_OVER message; both still exchange history so the replay works.
-14. **Fresh peer session.** If an opponent rejoins with a brand-new session (after Abandon), an in-progress battle cannot continue; both return to the lobby.
-15. **Third connection.** The guest peer id is fixed per room, so a third device cannot register it and sees "Room full".
-16. **Hotseat cinematic** plays the winner's view once for both players.
-17. **Weapons.** Machine-gun bullets and air-strike bombs are recorded as individual shots (they count in shots fired and accuracy). A defender's device stores the opponent's mine positions because it must resolve movement silently; the UI never shows them. Radar contacts are never written to the log or the save. The AI uses shells only, but its moves set off your mines.
-18. **Seeded RNG.** Fleet templates, random fleets, AI, and the coin flip use a seeded generator; radio chatter picks use plain randomness because tests never depend on them.
+4. **CONFIRMED wording.** Re-firing a square you already hit reports "Confirmed: <class> still here". Striking an already-damaged section on a square you never hit before reports "Already burning: <class> has moved here", because damage travels with the ship. Both are the same CONFIRMED result and cost the shot.
+5. **Wrecks and CONFIRMED.** Firing on a cell of an already-sunk ship reports CONFIRMED ("still here") with no new damage, because that section was already hit.
+6. **Patrol Boat crippling.** Any hit cripples it (threshold 1); a stern hit is attributed to the stern rule, a bow hit to the threshold rule.
+7. **Crippling and sinking on the same shot** report SUNK, not "crippled".
+8. **Own-ocean pegs.** The defender's ocean shows every enemy shot as a faint peg. This gives the defender exactly the same stale information the attacker holds and never reveals anything new.
+9. **Accuracy** counts HIT and SUNK shots; CONFIRMED costs a shot but is not a hit.
+10. **MVP ship** ranks by turns survived while damaged, then shots absorbed (hits plus confirmations).
+11. **Longest chase** is measured per class from first hit turn to sinking turn.
+12. **Coin flip.** The host draws a seed; both clients derive the first player from the same seed and animate the same flip. Rematches skip the flip (loser fires first) and show a banner instead.
+13. **Rematch** needs both players to press Rematch; the host then resets the room to the lobby with navies re-pickable.
+14. **Surrender** ends the game for both sides via a GAME_OVER message; both still exchange history so the replay works.
+15. **Fresh peer session.** If an opponent rejoins with a brand-new session (after Abandon), an in-progress battle cannot continue; both return to the lobby.
+16. **Third connection.** The guest peer id is fixed per room, so a third device cannot register it and sees "Room full".
+17. **Hotseat cinematic** plays the winner's view once for both players.
+18. **Weapons.** Machine-gun bullets and air-strike bombs are recorded as individual shots (they count in shots fired and accuracy). A defender's device stores the opponent's mine positions because it must resolve movement silently; the UI never shows them. Radar contacts are never written to the log or the save. The AI uses shells only, but its moves set off your mines.
+19. **Seeded RNG.** Fleet templates, random fleets, AI, and the coin flip use a seeded generator; radio chatter picks use plain randomness because tests never depend on them.
 
 ## Weapons (added after the first playtest, to shorten games)
 
