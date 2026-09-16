@@ -2764,14 +2764,22 @@ const UI = (function(){
     S.weapon=id; clearTargets(); if(id==='airstrike') S.selShip=0; Sfx.confirm(); renderWeapons(); renderActions(); if(isMobile()&&S.game.current===me()) setTab('enemy');
     toast($('#wm-hint').textContent.replace(/^Arm, then /,'Now '), '', 2600);
   }
+  // Availability of a weapon for the current player: ready | reload (temporary) | blocked (this turn) | gone (vessel lost or damaged, permanent) | spent (no uses left)
+  function weaponAvailability(id){
+    const g=S.game; const p=g.players[me()]; const fleet=p.fleet||[]; const st=Rules.weapon(p,id); const rd=Rules.weaponReady(g,me(),id);
+    if(st.usesRemaining===0) return {ok:false, kind:'spent', text:'0 left'};
+    if(id==='airstrike'){ const car=fleet[0]; if(car&&car.sunk) return {ok:false, kind:'gone', text:'carrier lost'}; if(car&&Rules.hitCount(car)>0) return {ok:false, kind:'gone', text:'carrier damaged'}; }
+    if(id==='torpedo'){ const ss=subStatus(); if(ss==='sub lost'||ss==='sub damaged') return {ok:false, kind:'gone', text:ss}; if(ss==='sub moved') return {ok:false, kind:'blocked', text:'sub moved'}; }
+    if(id==='radar' && fleet.length && !fleet.some(sh=>sh.bow&&!sh.sunk&&Rules.hitCount(sh)===0)) return {ok:false, kind:'gone', text:'no undamaged ship'};
+    if(id==='mg' && fleet.length && !fleet.some(sh=>sh.bow&&!sh.sunk)) return {ok:false, kind:'gone', text:'no ship afloat'};
+    if(!rd.ok){ if(st.cooldown>0) return {ok:false, kind:'reload', text:'reload '+st.cooldown}; return {ok:false, kind:'blocked', text:rd.reason}; }
+    return {ok:true, kind:'ready', text:id==='shell'?'unlimited':st.usesRemaining!=null?st.usesRemaining+' left':'ready'};
+  }
   function renderWeapons(){
     const g=S.game; const p=g.players[me()]; Rules.ensure(p); const box=$('#weapons'); if(!box) return; box.innerHTML='';
-    if(!Rules.weaponReady(g,me(),S.weapon).ok) S.weapon='shell';
-    WEAPON_ORDER.forEach(id=>{ const w=WEAPONS[id]; const st=Rules.weapon(p,id); const rd=Rules.weaponReady(g,me(),id); const grp=document.createElement('span'); grp.className='wgroup'; const b=document.createElement('button'); b.className='wpn'+(S.weapon===id?' selected':'');
-      let status=id==='shell'?'unlimited':st.usesRemaining!=null?st.usesRemaining+' left':(st.cooldown>0?'reload '+st.cooldown:'ready');
-      if(id==='airstrike'){ const car=p.fleet&&p.fleet[0]; if(car&&car.sunk) status='carrier lost'; else if(car&&Rules.hitCount(car)>0) status='carrier damaged'; }
-      if(id==='torpedo'){ const ss=subStatus(); if(ss) status=ss; }
-      b.innerHTML=w.short+'<small>'+status+'</small>'; b.disabled=id!=='shell'&&(!rd.ok||(id==='torpedo'&&!!subStatus()));
+    if(!weaponAvailability(S.weapon).ok) S.weapon='shell';
+    WEAPON_ORDER.forEach(id=>{ const w=WEAPONS[id]; const av=weaponAvailability(id); const grp=document.createElement('span'); grp.className='wgroup'; const b=document.createElement('button'); b.className='wpn'+(S.weapon===id?' selected':'')+(av.kind==='gone'||av.kind==='spent'?' gone':'')+(av.kind==='reload'?' reloading':'');
+      b.innerHTML=w.short+'<small>'+av.text+'</small>'; b.disabled=!av.ok; b.setAttribute('aria-disabled',String(!av.ok)); b.setAttribute('aria-label',w.name+': '+av.text);
       b.addEventListener('click',()=>{ if(HAS_OPTIONS[id]) openWeaponModal(id); else selectWeapon(id); });
       const hb=document.createElement('button'); hb.className='help'; hb.textContent='?'; hb.setAttribute('aria-label','Explain '+w.name); hb.addEventListener('click',()=>openWeaponModal(id));
       grp.appendChild(b); grp.appendChild(hb); box.appendChild(grp); });
