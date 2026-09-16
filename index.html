@@ -2732,15 +2732,54 @@ const UI = (function(){
   }
   function clearTargets(){ S.target=null; S.targets=[]; syncTargets(); }
   function selectWeapon(id){ Sfx.unlock(); if(!WEAPONS[id]) return; S.weapon=id; clearTargets(); if(id==='airstrike') S.selShip=0; Sfx.click(); renderWeapons(); renderActions(); if(isMobile()&&S.game.current===me()) setTab('enemy'); }
+  const WEAPON_HELP={
+    shell:{ how:'One shell at one cell. Results: Miss, Hit (class revealed, never the section or heading), Confirmed (that section was already burning), or Sunk (the full footprint is drawn).', down:'None. The enemy learns nothing about your fleet.', reload:'None — unlimited.', needs:'Nothing.' },
+    mg:{ how:'Four bullets at any four cells, fired from a ship you pick. A ship takes ONE section of damage only if two or more bullets strike it. A lone bullet grazes: class revealed, no damage.', down:'The enemy sees exactly which ship fired and where it is (marked on their grid with the turn number).', reload:'10 of your turns.', needs:'Any ship still afloat, even a crippled one.', opt:'Fire from' },
+    torpedo:{ how:'Runs a full row or column from the edge you choose. The first enemy section it reaches takes a standard hit; a wreck or burning section stops it with a Confirmed. Nothing behind it is touched. A clear run reports "lane clear".', down:'The enemy sees the lane and the direction as a wake on their ocean. Your Submarine stays hidden.', reload:'8 of your turns.', needs:'An undamaged Submarine that has not moved this turn.', opt:'Direction' },
+    mine:{ how:'Lay a hidden mine on any enemy cell instead of firing. It detonates as a standard hit when an enemy section moves onto it, or at once if you lay it right on a ship. The enemy only learns that a mine was laid somewhere.', down:'Uses your shot for the turn.', reload:'None — two per game.', needs:'A mine left.' },
+    radar:{ how:'One undamaged ship scans a square of enemy water. Every enemy section inside shows for five seconds, then vanishes; the log keeps only the count. Bigger ships scan bigger squares: Carrier 5×5, Battleship 4×4, Destroyer 3×3, Submarine 3×3, Patrol Boat 2×2.', down:'The enemy learns the scanning ship\'s exact position and heading. Uses your shot.', reload:'8 of your turns.', needs:'A ship with no damage at all.', opt:'Scan from' },
+    airstrike:{ how:'Your Carrier launches a bombing run on three cells in a straight line, horizontal or vertical. Every bomb is a full shot, so one run can hit up to three sections.', down:'The enemy learns the Carrier\'s exact position.', reload:'Once per game.', needs:'An undamaged Carrier.', opt:'Bomb line' },
+  };
+  const HAS_OPTIONS={mg:true, radar:true, torpedo:true, airstrike:true};
+  let wmChoice=null;
+  function openWeaponModal(id){
+    Sfx.unlock(); const g=S.game; const p=g.players[me()]; Rules.ensure(p); const w=WEAPONS[id], h=WEAPON_HELP[id]; const st=Rules.weapon(p,id); const rd=Rules.weaponReady(g,me(),id);
+    const myTurn=g.current===me()&&!g.winner&&g.stage==='battle'&&!S.busy&&!S.pendingFire;
+    $('#wm-title').textContent=w.name; $('#wm-how').textContent=h.how; $('#wm-down').textContent=h.down; $('#wm-reload').textContent=h.reload; $('#wm-needs').textContent=h.needs;
+    let status=id==='shell'?'Unlimited.':st.usesRemaining!=null?(st.usesRemaining+' left this game.'):(st.cooldown>0?'Reloading: '+st.cooldown+' more turn'+(st.cooldown===1?'':'s')+'.':'Ready.');
+    $('#wm-status').textContent=status;
+    const opts=$('#wm-opts'); opts.innerHTML=''; wmChoice=null; let anyEnabled=false, blocker=rd.ok?null:rd.reason;
+    const fleet=p.fleet||[];
+    const addOpt=(label, detail, tag, enabled, value)=>{ const d=document.createElement('button'); d.className='opt'+(enabled?'':' disabled'); d.innerHTML='<span>'+label+(detail?'<br><small>'+detail+'</small>':'')+'</span>'+(tag?'<span class="tag">'+tag+'</span>':''); d.disabled=!enabled; if(enabled){ anyEnabled=true; d.addEventListener('click',()=>{ wmChoice=value; opts.querySelectorAll('.opt').forEach(x=>x.classList.toggle('selected',x===d)); updateArm(); }); } opts.appendChild(d); return d; };
+    if(id==='mg'){ $('#wm-opt-title').textContent=h.opt; fleet.forEach((sh,i)=>{ const mob=Rules.mobility(sh); const d=addOpt(shipLabel(me(),sh.cls), SHIP_CLASSES[sh.cls].name+' · bow '+cellName(sh.bow)+' '+sh.heading, mob==='sunk'?'sunk':mob==='crippled'?'dead in water · can still fire':mob, mob!=='sunk', i); if(i===S.selShip&&mob!=='sunk'){ d.click(); } }); if(wmChoice==null){ const first=opts.querySelector('.opt:not(.disabled)'); if(first) first.click(); } }
+    else if(id==='radar'){ $('#wm-opt-title').textContent=h.opt; fleet.forEach((sh,i)=>{ const mob=Rules.mobility(sh); const n=SHIP_CLASSES[sh.cls].size; const okShip=mob==='ok'; const d=addOpt(shipLabel(me(),sh.cls), SHIP_CLASSES[sh.cls].name+' · bow '+cellName(sh.bow)+' '+sh.heading+(okShip?'':' · '+(mob==='sunk'?'sunk':'damaged — radar needs an undamaged ship')), n+'×'+n+' square', okShip, i); if(i===S.selShip&&okShip) d.click(); }); if(wmChoice==null){ const first=opts.querySelector('.opt:not(.disabled)'); if(first) first.click(); } if(!anyEnabled) blocker=blocker||'No undamaged ship left to scan from'; }
+    else if(id==='torpedo'){ $('#wm-opt-title').textContent=h.opt; const ss=subStatus(); LANE_MODES.forEach((m,k)=>{ const d=addOpt(m.label.replace('→','West → East along a').replace('←','East → West along a').replace('↓','North → South along a').replace('↑','South → North along a'), 'then tap any cell of the '+m.axis+' you want', m.label.split(' ')[0], !ss, k); if(k===S.torpDir%4&&!ss) d.click(); }); if(ss) blocker=blocker||('Torpedo unavailable: '+ss); }
+    else if(id==='airstrike'){ $('#wm-opt-title').textContent=h.opt; const car=fleet[0]; const okCar=car&&!car.sunk&&Rules.hitCount(car)===0; [{v:true,l:'Horizontal ↔',d:'three cells across a row, starting where you tap'},{v:false,l:'Vertical ↕',d:'three cells down a column, starting where you tap'}].forEach(o=>{ const d=addOpt(o.l,o.d,'',okCar,o.v); if(o.v===S.airDir&&okCar) d.click(); }); if(!okCar) blocker=blocker||(car&&car.sunk?'Your Carrier is sunk':'Your Carrier is damaged — no flight operations'); }
+    else { $('#wm-opt-title').textContent=''; }
+    $('#wm-hint').textContent = !myTurn ? 'Not your turn — you can arm this when your turn comes.' : blocker ? blocker : (id==='shell'?'Arm, then tap one enemy cell and press FIRE.':id==='mine'?'Arm, then tap the cell to mine and press LAY MINE.':id==='mg'?'Arm, then tap four enemy cells and press FIRE MG.':id==='radar'?'Arm, then tap the top-left corner of the square and press SWEEP.':id==='torpedo'?'Arm, then tap any cell of the lane and press TORPEDO.':'Arm, then tap the first cell of the bomb line and press STRIKE.');
+    const arm=$('#wm-arm'); arm.textContent='Arm '+w.name; arm.dataset.weapon=id;
+    function updateArm(){ arm.disabled=!(myTurn && !blocker && (!HAS_OPTIONS[id] || wmChoice!=null)); }
+    updateArm(); overlay('ov-weapon',true);
+  }
+  function armWeapon(){
+    const id=$('#wm-arm').dataset.weapon; overlay('ov-weapon',false); if(!id) return;
+    if(id==='mg'||id==='radar'){ if(wmChoice!=null) S.selShip=wmChoice; }
+    else if(id==='torpedo'){ if(wmChoice!=null) S.torpDir=wmChoice; }
+    else if(id==='airstrike'){ if(wmChoice!=null) S.airDir=wmChoice; }
+    S.weapon=id; clearTargets(); if(id==='airstrike') S.selShip=0; Sfx.confirm(); renderWeapons(); renderActions(); if(isMobile()&&S.game.current===me()) setTab('enemy');
+    toast($('#wm-hint').textContent.replace(/^Arm, then /,'Now '), '', 2600);
+  }
   function renderWeapons(){
     const g=S.game; const p=g.players[me()]; Rules.ensure(p); const box=$('#weapons'); if(!box) return; box.innerHTML='';
     if(!Rules.weaponReady(g,me(),S.weapon).ok) S.weapon='shell';
-    WEAPON_ORDER.forEach(id=>{ const w=WEAPONS[id]; const st=Rules.weapon(p,id); const rd=Rules.weaponReady(g,me(),id); const b=document.createElement('button'); b.className='wpn'+(S.weapon===id?' selected':'');
+    WEAPON_ORDER.forEach(id=>{ const w=WEAPONS[id]; const st=Rules.weapon(p,id); const rd=Rules.weaponReady(g,me(),id); const grp=document.createElement('span'); grp.className='wgroup'; const b=document.createElement('button'); b.className='wpn'+(S.weapon===id?' selected':'');
       let status=id==='shell'?'unlimited':st.usesRemaining!=null?st.usesRemaining+' left':(st.cooldown>0?'reload '+st.cooldown:'ready');
       if(id==='airstrike'){ const car=p.fleet&&p.fleet[0]; if(car&&car.sunk) status='carrier lost'; else if(car&&Rules.hitCount(car)>0) status='carrier damaged'; }
       if(id==='torpedo'){ const ss=subStatus(); if(ss) status=ss; }
-      b.innerHTML=w.short+'<small>'+status+'</small>'; b.title=w.desc+(rd.ok?'':'  ('+rd.reason+')'); b.disabled=id!=='shell'&&(!rd.ok||(id==='torpedo'&&!!subStatus()));
-      b.addEventListener('click',()=>selectWeapon(id)); box.appendChild(b); });
+      b.innerHTML=w.short+'<small>'+status+'</small>'; b.disabled=id!=='shell'&&(!rd.ok||(id==='torpedo'&&!!subStatus()));
+      b.addEventListener('click',()=>{ if(HAS_OPTIONS[id]) openWeaponModal(id); else selectWeapon(id); });
+      const hb=document.createElement('button'); hb.className='help'; hb.textContent='?'; hb.setAttribute('aria-label','Explain '+w.name); hb.addEventListener('click',()=>openWeaponModal(id));
+      grp.appendChild(b); grp.appendChild(hb); box.appendChild(grp); });
     $('#weapon-desc').textContent=WEAPONS[S.weapon].desc;
   }
   function renderActions(){
@@ -2818,6 +2857,7 @@ const UI = (function(){
     ['advance','reverse','rotcw','rotccw'].forEach(t=>{ const b=$('#btn-'+t); b.addEventListener('click',()=>{ clearPreview(); doManeuver(t); }); b.addEventListener('mouseenter',()=>previewMove(t)); b.addEventListener('focus',()=>previewMove(t)); b.addEventListener('mouseleave',clearPreview); b.addEventListener('blur',clearPreview); });
     $('#btn-skip').addEventListener('click',()=>{ Sfx.unlock(); const r=Rules.skipManeuver(S.game,me()); if(!r.ok){ toast(r.reason,'err'); return; } S.game=r.game; Sfx.click(); save(); refreshBattle(); if(isMobile()) setTab('enemy'); });
     $('#btn-fire').addEventListener('click',()=>doFire());
+    $('#wm-cancel').addEventListener('click',()=>overlay('ov-weapon',false)); $('#wm-arm').addEventListener('click',armWeapon);
     $('#btn-airdir').addEventListener('click',()=>{ S.airDir=!S.airDir; Sfx.click(); syncTargets(); renderActions(); });
     $('#btn-torpdir').addEventListener('click',()=>{ S.torpDir=(S.torpDir+1)%4; Sfx.click(); syncTargets(); renderActions(); });
     $('#btn-copy2').addEventListener('click',copyLink); $('#btn-share2').addEventListener('click',shareLink);
