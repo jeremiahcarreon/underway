@@ -982,6 +982,8 @@ const Rules = (function(){
     const ap=g.players[pid];
     const shot=Object.assign({n:g.log.length, turn:g.turn, player:pid, kind:'shot', weapon:weaponId||'shell', cell:{x:cell.x,y:cell.y}, result:res.result, cls:res.cls||null,
       shipIdx:(res.shipIdx!=null&&res.shipIdx>=0)?res.shipIdx:(res.cls?CLASS_ORDER.indexOf(res.cls):-1), crippled:!!res.crippled, crippledBy:res.crippledBy||null, footprint:res.footprint?clone(res.footprint):null}, extra||{});
+    // CONFIRMED on a square where this class was never struck before means the damaged section travelled here: the ship moved.
+    if(shot.result===RESULT.CONFIRMED){ const seen=ap.shots.some(x=>x.cls===shot.cls && x.cell.x===cell.x && x.cell.y===cell.y && x.result!==RESULT.MISS); shot.moved=!seen; }
     ap.shots.push(shot); g.log.push(shot); return shot;
   }
   function checkWin(g, pid){
@@ -1209,7 +1211,7 @@ const Rules = (function(){
     switch(shot.result){
       case RESULT.MISS: return 'Miss';
       case RESULT.HIT: return 'Hit: '+cn+(shot.crippled?' — Crippled: dead in the water':'');
-      case RESULT.CONFIRMED: return 'Confirmed: '+cn+' still here';
+      case RESULT.CONFIRMED: return shot.moved ? 'Already burning: '+cn+' has moved here (no new damage)' : 'Confirmed: '+cn+' still here (no new damage)';
       case RESULT.SUNK: return 'Sunk: '+cn;
       case RESULT.GRAZE: return 'Grazed: '+cn+' (no damage)';
     }
