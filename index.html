@@ -2224,7 +2224,7 @@ const Anim = (function(){
     o.target=cell; shell(o,from,to,700); await wait(700);
     switch(shot.result){
       case RESULT.MISS: Sfx.splash(); splash(o,cell,650); textPop(o,cell,'MISS','#cfe3f5',900); await wait(900); break;
-      case RESULT.CONFIRMED: Sfx.puff(); puff(o,cell,700); textPop(o,cell,'STILL HERE','#ffd5d0',1000); await wait(1000); break;
+      case RESULT.CONFIRMED: Sfx.puff(); puff(o,cell,700); textPop(o,cell,shot.moved?'MOVED HERE':'STILL HERE',shot.moved?'#ffb347':'#ffd5d0',1100); await wait(1000); break;
       case RESULT.HIT: {
         Sfx.explosion(false); flash(o,cell,140,1); fireball(o,cell,520,1); debris(o,cell,700); shake(opts.shakeEl); textPop(o,cell,'HIT',Render.ICON_COLORS[shot.cls]||'#ffb347',1100);
         if(shot.crippled){
@@ -2250,7 +2250,7 @@ const Anim = (function(){
     switch(res.result){
       case RESULT.MISS: Sfx.splash(); splash(o,cell,500); await wait(250); break;
       case RESULT.GRAZE: sparks(o,cell,500); textPop(o,cell,'GRAZE '+SHIP_CLASSES[cls].icon,'#ffb347',900); await wait(250); break;
-      case RESULT.CONFIRMED: Sfx.puff(); puff(o,cell,600); textPop(o,cell,'STILL HERE','#ffd5d0',900); await wait(250); break;
+      case RESULT.CONFIRMED: Sfx.puff(); puff(o,cell,600); textPop(o,cell,res.moved?'MOVED HERE':'STILL HERE',res.moved?'#ffb347':'#ffd5d0',900); await wait(250); break;
       case RESULT.HIT: Sfx.explosion(false); flash(o,cell,120,0.8); fireball(o,cell,480,0.9); debris(o,cell,600,8); shake(opts.shakeEl); textPop(o,cell,'HIT',Render.ICON_COLORS[cls]||'#ffb347',1000);
         if(res.crippled){ await wait(300); Sfx.klaxon(); Sfx.explosion(true); fireball(o,cell,600,0.9); oilSpread(o,cell,1300); textPop(o,cell,'DEAD IN THE WATER','#ff9a90',1400); await wait(500); } else await wait(350); break;
       case RESULT.SUNK: { Sfx.explosion(false); flash(o,cell,120,1); fireball(o,cell,520,1); debris(o,cell,700); shake(opts.shakeEl); await wait(250);
