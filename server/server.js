@@ -72,8 +72,10 @@ function replayFor(g) {
   const host = pick(H, 'host') || pick(G, 'host') || {}, guest = pick(G, 'guest') || pick(H, 'guest') || {};
   const hostName = q.admiralById.get(g.host_id), guestName = g.guest_id ? q.admiralById.get(g.guest_id) : null;
   const shots = (H ? H.log : G.log).filter(e => e.kind !== 'move');
-  const movesH = (H ? H.log.filter(e => e.kind === 'move' && e.player === 'host') : (host.moves || []).map(m => Object.assign({}, m, { kind: 'move', player: 'host' })));
-  const movesG = (G ? G.log.filter(e => e.kind === 'move' && e.player === 'guest') : (guest.moves || []).map(m => Object.assign({}, m, { kind: 'move', player: 'guest' })));
+  // each side's moves: union of its log entries and its moves array (deduped), so a partial save still replays
+  const movesOf = (game, rec, role) => { const seen = new Set(); const out = []; const add = m => { const k = m.turn + ':' + m.ship + ':' + m.type; if (seen.has(k)) return; seen.add(k); out.push(Object.assign({}, m, { kind: 'move', player: role })); };
+    if (game) game.log.filter(e => e.kind === 'move' && e.player === role).forEach(add); (rec.moves || []).forEach(add); return out; };
+  const movesH = movesOf(H, host, 'host'), movesG = movesOf(G, guest, 'guest');
   const order = { move: 0, mine: 1, radar: 1, shot: 2 };
   const log = shots.concat(movesH, movesG).sort((a, b) => a.turn - b.turn || (order[a.kind] || 0) - (order[b.kind] || 0) || (a.n || 0) - (b.n || 0)).map((e, i) => Object.assign({}, e, { n: i }));
   return {
@@ -171,7 +173,7 @@ function sendTo(ws, obj) { if (ws && ws.readyState === 1) { try { ws.send(JSON.s
 function notePayload(code, type, payload, fromRole) {
   try {
     if (type === 'LOBBY_STATE' && payload) q.setNavies.run(payload.hostNavy || null, payload.guestNavy || null, code);
-    if (type === 'NAVY_PICK' && payload && fromRole === 'guest') q.setNavies.run(null, payload.navy || null, code);
+    if (type === 'NAVY_PICK' && payload) q.setNavies.run(fromRole === 'host' ? (payload.navy || null) : null, fromRole === 'guest' ? (payload.navy || null) : null, code);
     if (type === 'START') q.setLive.run(now(), code);
     if (type === 'GAME_OVER' && payload) {
       const winner = payload.winner === 'host' || payload.winner === 'guest' ? payload.winner : null;
