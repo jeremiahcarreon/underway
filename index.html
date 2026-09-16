@@ -3146,7 +3146,7 @@ const UI = (function(){
   }
   function showOver(){
     const g=S.game; const pid=S.mode==='hotseat'?g.winner:me(); const won=g.winner===pid; const st=Rules.computeStats(g,pid); const opSt=Rules.computeStats(g,Rules.other(pid));
-    showScreen('over'); const title=$('#over-title'); title.textContent=S.mode==='hotseat'?(g.players[g.winner].name+' wins'):(won?'VICTORY':'DEFEAT'); title.className=won?'victory':'defeat';
+    showScreen('over'); const title=$('#over-title'); title.textContent=(S.mode==='hotseat'||S.replayOnly)?(g.players[g.winner].name+' wins'):(won?'VICTORY':'DEFEAT'); title.className=(won||S.replayOnly)?'victory':'defeat';
     $('#over-sub').textContent=(g.endReason==='surrender'?'By surrender. ':'')+g.players[g.winner].name+' ('+navy(g.players[g.winner].navy).name+') defeats '+g.players[Rules.other(g.winner)].name+' ('+navy(g.players[Rules.other(g.winner)].navy).name+') after '+g.turn+' turns.';
     const box=$('#over-stats'); box.innerHTML='';
     const row=(k,v)=>{ const d=document.createElement('div'); d.innerHTML='<span>'+k+'</span><b>'+v+'</b>'; box.appendChild(d); };
