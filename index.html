@@ -1663,7 +1663,7 @@ const Store = (function(){
    All sounds are built from oscillators, noise buffers, envelopes, filters and delay.
    ============================================================ */
 const Sfx = (function(){
-  let ctx=null, master=null, noiseBuf=null, muted=false, volume=0.7, fireNode=null, ambientNode=null, voiceOn=false;
+  let ctx=null, master=null, noiseBuf=null, muted=false, volume=0.7, ambientNode=null, voiceOn=false;
   function ensure(){
     if(ctx) return ctx;
     const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return null;
@@ -1705,18 +1705,6 @@ const Sfx = (function(){
     const n=noise(); const f=filt('lowpass',2400,0.5); f.frequency.exponentialRampToValueAtTime(140,t+0.6*k); const g=gain(0,t); adsr(g,t,0.8,0.005,0.05,0.55*k); n.connect(f).connect(g).connect(master); n.start(t); n.stop(t+0.8*k);
     const o=osc('sine',70); o.frequency.exponentialRampToValueAtTime(32,t+0.7*k); const og=gain(0,t); adsr(og,t,0.9,0.005,0.08,0.7*k); o.connect(og).connect(master); o.start(t); o.stop(t+0.9*k);
     const c=noise(); const cf=filt('highpass',1800,0.7); const cg=gain(0,t+0.1); const p=cg.gain; p.setValueAtTime(0.0001,t+0.1); for(let i=0;i<14;i++){ const tt=t+0.12+i*0.06*k; p.setValueAtTime(0.02+Math.random()*0.16*(1-i/14),tt); p.setValueAtTime(0.002,tt+0.02); } p.exponentialRampToValueAtTime(0.0001,t+1.1*k); c.connect(cf).connect(cg).connect(master); c.start(t); c.stop(t+1.2*k);
-  }
-  function fireLoop(on){
-    if(!ready()) return;
-    if(on && !fireNode){
-      // Quiet crackle: band-passed noise whose gain is flickered by a second, heavily low-passed noise source.
-      // Random by construction (never periodic): a square-wave LFO here produced an audible constant tick.
-      const n=noise(); const f=filt('bandpass',2400,1.4); const g=gain(0.0001,now());
-      const m=noise(); const mf=filt('lowpass',6,0.7); const mg=gain(1.6,now()); m.connect(mf).connect(mg).connect(g.gain);
-      g.gain.setTargetAtTime(0.03,now(),1.0);
-      n.connect(f).connect(g).connect(master); n.start(); m.start(); fireNode={n,m,g};
-    }
-    else if(!on && fireNode){ const fn=fireNode; fireNode=null; try{ fn.m.disconnect(); }catch(e){} fn.g.gain.cancelScheduledValues(now()); fn.g.gain.setTargetAtTime(0.0001,now(),0.3); setTimeout(()=>{ try{ fn.n.stop(); fn.m.stop(); }catch(e){} },900); }
   }
   function klaxon(){
     if(!ready()) return; const t=now();
@@ -1769,7 +1757,7 @@ const Sfx = (function(){
     try{ const u=new SpeechSynthesisUtterance(text.replace(/[{}]/g,'')); const n=navy(navyId); u.lang='en-US'; u.pitch=n.voice.pitch; u.rate=n.voice.rate; u.volume=volume; speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(e){}
   }
   function applySettings(s){ setVolume(s.volume); setMute(s.mute); setVoice(s.voice); if(ctx) ambient(!!s.ambient); }
-  return { ensure, unlock, cannon, whistle, splash, explosion, puff, machineGun, mineBlast, radarPing, jets, torpedoRun, fireLoop, klaxon, engine, sinking, bugle, taps, click, confirm, buzz, chime, ambient, setVolume, setMute, setVoice, speak, applySettings, get context(){ return ctx; } };
+  return { ensure, unlock, cannon, whistle, splash, explosion, puff, machineGun, mineBlast, radarPing, jets, torpedoRun, klaxon, engine, sinking, bugle, taps, click, confirm, buzz, chime, ambient, setVolume, setMute, setVoice, speak, applySettings, get context(){ return ctx; } };
 })();
 
 /* ============================================================
