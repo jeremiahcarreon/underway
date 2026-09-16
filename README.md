@@ -26,7 +26,7 @@ A two-player, browser-based naval combat game where the fleets can move. One sel
 
 ## Weapons (added after the first playtest, to shorten games)
 
-Every weapon replaces your shot for the turn. Pick it in the action bar, then tap the enemy grid.
+Every weapon replaces your shot for the turn. Pick it in the action bar, then tap the enemy grid. Weapons with choices (machine gun, torpedo, radar, air strike) open a popup that explains the weapon, its downside and reload, and asks for the choice (which ship fires or scans, the torpedo direction, the bomb-line orientation) before you aim; the **?** next to every weapon opens the same popup for reading.
 
 | Weapon | Cost / limit | What it does | What the enemy learns |
 |---|---|---|---|
