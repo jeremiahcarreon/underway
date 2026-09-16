@@ -3341,6 +3341,14 @@ const Tests = (function(){
   test('HIT reveals class only', ()=>{ const f=fleetWith([{cls:'submarine',x:5,y:5,h:'S'}]); const r=Rules.resolveShot(f,P(5,4),1); eq(r.result,RESULT.HIT); eq(r.cls,'submarine'); ok(!r.footprint); });
   test('MISS on empty water', ()=>{ const f=fleetWith([]); const r=Rules.resolveShot(f,P(9,9),1); eq(r.result,RESULT.MISS); eq(r.cls,null); });
   test('CONFIRMED on an already-hit section, no new damage', ()=>{ let f=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]); const a=Rules.resolveShot(f,P(5,5),1); f=a.fleet; const b=Rules.resolveShot(f,P(5,5),2); eq(b.result,RESULT.CONFIRMED); eq(b.cls,'destroyer'); eq(Rules.hitCount(b.fleet[2]),1); ok(!b.crippled); });
+  test('CONFIRMED wording: same square = still here; new square = the damaged section moved here', ()=>{
+    let g=localGame(55); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]);
+    g=Rules.fire(g,'host',P(5,5)).game; g=Rules.fire(g,'guest',P(9,9)).game;              // hit the bow at 5,5
+    let r=Rules.fire(g,'host',P(5,5)); eq(r.shot.result,'confirmed'); ok(!r.shot.moved); ok(/still here/.test(Rules.resultText(r.shot)),Rules.resultText(r.shot)); g=r.game; g=Rules.fire(g,'guest',P(9,9)).game;
+    g.players.guest.fleet=Rules.applyMove(g.players.guest.fleet,2,'advance').fleet;         // bow (damaged) now at 5,4
+    r=Rules.fire(g,'host',P(5,4)); eq(r.shot.result,'confirmed'); ok(r.shot.moved,'new square: moved'); ok(/moved here/.test(Rules.resultText(r.shot)),Rules.resultText(r.shot));
+    ok(NAVIES.every(n=>n.chatter.moved&&n.chatter.moved.length>=2),'every navy has moved-here chatter');
+  });
   test('SUNK when every section is hit, with footprint', ()=>{ const f=fleetWith([{cls:'patrol',x:2,y:2,h:'W'}]); const r=hitShip(f,'patrol',[0,1]); const last=r.results[1]; eq(last.result,RESULT.SUNK); eq(last.footprint,[P(2,2),P(3,2)]); ok(r.fleet[4].sunk); });
   test('wrecks block the owner\'s other ships', ()=>{ let f=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'},{cls:'patrol',x:5,y:4,h:'E'}]); f=hitShip(f,'patrol',[0,1]).fleet; ok(f[4].sunk); const r=Rules.canMove(f,2,'advance'); ok(!r.ok); eq(r.reason,'Blocked by wreck'); });
   test('damage travels with a moved ship', ()=>{
