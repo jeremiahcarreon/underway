@@ -2429,13 +2429,14 @@ const UI = (function(){
       status:(st,d)=>{ S.linkState=st; renderConn(st,d); if(S.screen==='lobby') renderLobby(); },
       welcome:w=>onWelcome(w),
       message:m=>{ const r=S.rel.accept(m.seq); if(r==='dup') return; if(r==='gap'){ S.sock.retryNow(); return; } handleMessage(m.msg.type, m.msg.payload, m); },
-      presence:p=>{ S.oppOnline=!!p.opponentOnline; if(S.role==='host') S.lobby.guestOnline=S.oppOnline; renderConn(S.linkState,''); if(S.screen==='lobby') renderLobby(); },
+      presence:p=>{ S.oppOnline=!!p.opponentOnline; if(S.role==='host') S.lobby.guestOnline=S.oppOnline; if(p.opponentName) setOpponentName(p.opponentName); renderConn(S.linkState,''); if(S.screen==='lobby') renderLobby(); },
       error:e=>{ if(e.fatal) showError('Cannot join this game', e.error||'Unknown error', false); else console.warn('server:', e.error); },
     }});
     S.sock.start();
   }
+  function setOpponentName(name){ const t=S.role==='host'?'guest':'host'; if(t==='guest') S.lobby.guestName=name; else S.lobby.hostName=name; if(S.game&&S.game.players[t]) S.game.players[t].name=name; }
   function onWelcome(w){
-    S.role=w.role; S.oppOnline=!!w.opponentOnline; if(S.role==='host') S.lobby.guestOnline=S.oppOnline; else S.lobby.guestOnline=true;
+    S.role=w.role; S.oppOnline=!!w.opponentOnline; if(S.role==='host') S.lobby.guestOnline=S.oppOnline; else S.lobby.guestOnline=true; if(w.opponentName) setOpponentName(w.opponentName);
     if(!S.sessionLive){
       // first connection of this page session: the server's copy of our state is the truth
       if(w.blob&&w.blob.game&&w.blob.room===S.room) applySaved(w.blob);
