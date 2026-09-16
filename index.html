@@ -2690,7 +2690,6 @@ const UI = (function(){
     $('#own-label').textContent=(S.mode==='hotseat'?my.name:'Your')+' ocean · '+navy(own.navyId).name; $('#enemy-label').textContent='Enemy waters · '+navy(en.navyId).name;
     $('#own-badge').textContent=Rules.sunkCount(my.fleet||[])+'/5 lost'; const t=Rules.classTally(my.shots); $('#enemy-badge').textContent=Object.values(t).filter(x=>x.sunk).length+'/5 sunk';
     renderDocks(); renderTally(t); renderWeapons(); renderActions(); renderConn(S.linkState,'');
-    const burning=(my.fleet||[]).some(s=>!s.sunk&&Rules.hitCount(s)>0)||AI.liveHits(my.shots).length>0; Sfx.fireLoop(burning && !g.winner);
   }
   function renderDocks(){
     const g=S.game; const my=g.players[me()], op=g.players[them()];
@@ -3113,7 +3112,7 @@ const UI = (function(){
     g.log.sort((a,b)=>a.turn-b.turn||(a.kind==='move'?0:1)-(b.kind==='move'?0:1)); g.log.forEach((e,i)=>e.n=i);
   }
   async function onGameOver(){
-    if(S.gameOverHandled) return; S.gameOverHandled=true; const g=S.game; hideBanner(); S.busy=false; S.pendingFire=null; Sfx.fireLoop(false);
+    if(S.gameOverHandled) return; S.gameOverHandled=true; const g=S.game; hideBanner(); S.busy=false; S.pendingFire=null;
     if(S.mode==='net') sendGameOver(); save(); refreshBattle();
     const won=g.winner===me(); const myN=g.players[me()].navy||'us', opN=g.players[them()].navy||'uk';
     const lines=navy(myN).chatter[won?'victory':'defeat']; const line=lines[Math.floor(Math.random()*lines.length)];
