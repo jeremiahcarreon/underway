@@ -1,7 +1,7 @@
 const {Browser,cellXY,waitFor,selectShip,URL}=require('./cdp.js'); const P=(x,y)=>({x,y});
 async function st(b){ return b.eval(`(()=>{const S=Underway.UI.S; return {cur:S.game.current, phase:S.game.phase, turn:S.game.turn, busy:S.busy, winner:S.game.winner, screen:S.screen};})()`); }
 async function settle(b){ for(let i=0;i<120;i++){ const s=await st(b); if(!s.busy && (s.cur==='host'||s.winner)) return s; await b.wait(150); if(i%4===3) await b.eval(`Underway.Anim.skip()`); } throw new Error('never settled'); }
-async function pickWeapon(b,id){ const i=['shell','mg','torpedo','mine','radar','airstrike'].indexOf(id)+1; await b.click(`.weapons button:nth-child(${i})`); await b.wait(80); }
+async function pickWeapon(b,id){ const i=['shell','mg','torpedo','mine','radar','airstrike'].indexOf(id)+1; await b.click(`.weapons .wgroup:nth-child(${i}) button.wpn`); await b.wait(120); if(await b.eval(`document.getElementById('ov-weapon').classList.contains('active')`)){ if(await b.eval(`document.getElementById('wm-arm').disabled`)){ await b.click('#wm-cancel'); } else { await b.click('#wm-arm'); } await b.wait(100); } return b.eval(`Underway.UI.S.weapon`); }
 async function tapEnemy(b,cell){ const xy=await cellXY(b,'enemy',cell); await b.clickCanvas('#enemyCanvas',xy.x,xy.y); await b.wait(60); }
 async function aiCells(b,idx){ return b.eval(`Underway.Rules.shipCells(Underway.UI.S.game.players.guest.fleet[${idx}])`); }
 async function run(mobile){
@@ -18,7 +18,7 @@ async function run(mobile){
   const ds=await b.eval(`Underway.UI.S.game.players.guest.fleet[2]`); const dd={N:[0,-1],E:[1,0],S:[0,1],W:[-1,0]}[ds.heading]; const nowCells=await aiCells(b,2); const ahead=P(nowCells[0].x+dd[0],nowCells[0].y+dd[1]); const behind=P(nowCells[2].x-dd[0],nowCells[2].y-dd[1]);
   await pickWeapon(b,'mine'); await tapEnemy(b,ahead); await b.click('#btn-fire'); s=await settle(b);
   await pickWeapon(b,'mine'); await tapEnemy(b,behind); await b.click('#btn-fire'); s=await settle(b);
-  console.log('mines laid:', await b.eval(`Underway.UI.S.game.players.host.mines.length`), 'mine button:', await b.eval(`document.querySelector('.weapons button:nth-child(3)').textContent+' disabled='+document.querySelector('.weapons button:nth-child(3)').disabled`));
+  console.log('mines laid:', await b.eval(`Underway.UI.S.game.players.host.mines.length`), 'mine button:', await b.eval(`document.querySelector('.weapons .wgroup:nth-child(3) button.wpn').textContent+' disabled='+document.querySelector('.weapons .wgroup:nth-child(3) button.wpn').disabled`));
   // radar with an undamaged ship
   const und=await b.eval(`Underway.UI.S.game.players.host.fleet.findIndex(s=>!s.sunk&&Underway.Rules.hitCount(s)===0)`); if(und>=0){ await pickWeapon(b,'radar'); await selectShip(b,und); await tapEnemy(b,P(4,4)); await b.click('#btn-fire'); s=await settle(b); console.log('radar done, contacts:', await b.eval(`Underway.UI.S.game.log.filter(e=>e.kind==='radar').map(e=>e.count).join(',')`)); }
   // air strike if carrier undamaged
