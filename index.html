@@ -2749,6 +2749,8 @@ const UI = (function(){
     let status=id==='shell'?'Unlimited.':st.usesRemaining!=null?(st.usesRemaining+' left this game.'):(st.cooldown>0?'Reloading: '+st.cooldown+' more turn'+(st.cooldown===1?'':'s')+'.':'Ready.');
     $('#wm-status').textContent=status;
     const opts=$('#wm-opts'); opts.innerHTML=''; wmChoice=null; let anyEnabled=false, blocker=rd.ok?null:rd.reason;
+    const arm=$('#wm-arm'); arm.textContent='Arm '+w.name; arm.dataset.weapon=id;
+    const updateArm=()=>{ arm.disabled=!(myTurn && !blocker && (!HAS_OPTIONS[id] || wmChoice!=null)); };
     const fleet=p.fleet||[];
     const addOpt=(label, detail, tag, enabled, value)=>{ const d=document.createElement('button'); d.className='opt'+(enabled?'':' disabled'); d.innerHTML='<span>'+label+(detail?'<br><small>'+detail+'</small>':'')+'</span>'+(tag?'<span class="tag">'+tag+'</span>':''); d.disabled=!enabled; if(enabled){ anyEnabled=true; d.addEventListener('click',()=>{ wmChoice=value; opts.querySelectorAll('.opt').forEach(x=>x.classList.toggle('selected',x===d)); updateArm(); }); } opts.appendChild(d); return d; };
     if(id==='mg'){ $('#wm-opt-title').textContent=h.opt; fleet.forEach((sh,i)=>{ const mob=Rules.mobility(sh); const d=addOpt(shipLabel(me(),sh.cls), SHIP_CLASSES[sh.cls].name+' · bow '+cellName(sh.bow)+' '+sh.heading, mob==='sunk'?'sunk':mob==='crippled'?'dead in water · can still fire':mob, mob!=='sunk', i); if(i===S.selShip&&mob!=='sunk'){ d.click(); } }); if(wmChoice==null){ const first=opts.querySelector('.opt:not(.disabled)'); if(first) first.click(); } }
@@ -2757,8 +2759,6 @@ const UI = (function(){
     else if(id==='airstrike'){ $('#wm-opt-title').textContent=h.opt; const car=fleet[0]; const okCar=car&&!car.sunk&&Rules.hitCount(car)===0; [{v:true,l:'Horizontal ↔',d:'three cells across a row, starting where you tap'},{v:false,l:'Vertical ↕',d:'three cells down a column, starting where you tap'}].forEach(o=>{ const d=addOpt(o.l,o.d,'',okCar,o.v); if(o.v===S.airDir&&okCar) d.click(); }); if(!okCar) blocker=blocker||(car&&car.sunk?'Your Carrier is sunk':'Your Carrier is damaged — no flight operations'); }
     else { $('#wm-opt-title').textContent=''; }
     $('#wm-hint').textContent = !myTurn ? 'Not your turn — you can arm this when your turn comes.' : blocker ? blocker : (id==='shell'?'Arm, then tap one enemy cell and press FIRE.':id==='mine'?'Arm, then tap the cell to mine and press LAY MINE.':id==='mg'?'Arm, then tap four enemy cells and press FIRE MG.':id==='radar'?'Arm, then tap the top-left corner of the square and press SWEEP.':id==='torpedo'?'Arm, then tap any cell of the lane and press TORPEDO.':'Arm, then tap the first cell of the bomb line and press STRIKE.');
-    const arm=$('#wm-arm'); arm.textContent='Arm '+w.name; arm.dataset.weapon=id;
-    function updateArm(){ arm.disabled=!(myTurn && !blocker && (!HAS_OPTIONS[id] || wmChoice!=null)); }
     updateArm(); overlay('ov-weapon',true);
   }
   function armWeapon(){
