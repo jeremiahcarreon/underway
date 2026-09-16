@@ -60,7 +60,7 @@ Reloads count your own turns and tick down at the start of each of your turns. W
 17. Try to move a ship through one of your own wrecks: "Blocked by wreck".
 18. Every peg carries its turn number; hover (mouse) or long-press (touch) shows turn and result text history.
 19. In placement and the docks, each class has a distinct top-down and side profile in the navy's livery with a bow chevron and stern flag.
-20. Play through a turn with sound: cannon, whistle, splash, explosion, crackle loop while burning, klaxon, engine rumble, sinking, bugle/taps, UI sounds. Change volume and mute, reload: settings persist.
+20. Play through a turn with sound: cannon, whistle, splash, explosion, klaxon, engine rumble, sinking, bugle/taps, UI sounds. Change volume and mute, reload: settings persist.
 21. Refresh either browser mid-battle: Resume restores fleet, pegs, turn and phase and reconnects; go offline briefly: "reconnecting…" then resumes with no lost messages.
 22. Sink the fifth ship: the game ends at once, each side plays its cinematic, the stats card matches the log, and the Reveal replay scrubs through every turn including the silent moves.
 23. Both press Rematch: back to the lobby, navies re-pickable, the loser fires first.
