@@ -1563,7 +1563,7 @@ class Sock {
   retryNow(){ this.tries=0; clearTimeout(this.timers.rc); if(this.ws){ const w=this.ws; this.ws=null; try{ w.close(); }catch(e){} } this.closed=false; this.open(); }
   destroy(){ this.closed=true; clearInterval(this.timers.hb); clearTimeout(this.timers.rc); if(this.ws){ const w=this.ws; this.ws=null; try{ w.close(); }catch(e){} } this.setState('closed'); }
 }
-const Net = { Reliable, Sock };const Net = { Channel, Link, UNRELIABLE };
+const Net = { Reliable, Sock };
 
 /* ============================================================
    SECTION 6 — PERSISTENCE (localStorage, key underway:<room>)
