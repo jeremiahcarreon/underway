@@ -2330,10 +2330,10 @@ const Anim = (function(){
    ============================================================ */
 const UI = (function(){
   const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
-  const S={ screen:'home', room:null, role:null, mode:null, aiLevel:'admiral', name:'', navy:null, game:null, link:null, chan:null, rng:null, sid:null, peerSid:null,
+  const S={ screen:'home', room:null, role:null, mode:null, aiLevel:'admiral', name:'', navy:null, game:null, sock:null, rel:null, rng:null, admiral:null, oppOnline:false, pendingJoin:null, sessionLive:false,
             lobby:{hostNavy:null,guestNavy:null,hostName:'',guestName:'',stage:'lobby',guestOnline:false,hostReady:false,guestReady:false,picker:'host',rematch:false,nextFirst:null},
             pendingFire:null, oppHistory:null, settings:null, oceans:{own:null,enemy:null,place:null}, place:{pid:'host',fleet:null,sel:0,drag:null,locked:false},
-            target:null, targets:[], weapon:'shell', airDir:true, torpDir:0, queue:Promise.resolve(), selShip:0, viewAs:'host', tab:'own', gameOverHandled:false, myRematch:false, oppRematch:false, chatLog:[], busy:false, tickTimer:0, gameOverSent:false, linkState:'offline' };
+            target:null, targets:[], weapon:'shell', airDir:true, torpDir:0, queue:Promise.resolve(), selShip:0, viewAs:'host', tab:'own', gameOverHandled:false, myRematch:false, oppRematch:false, chatLog:[], busy:false, gameOverSent:false, linkState:'offline' };
   const randomId=()=>Math.random().toString(36).slice(2,10)+Date.now().toString(36);
   const me=()=>S.mode==='net'?S.role:S.viewAs; const them=()=>Rules.other(me());
   const isMobile=()=>window.innerWidth<=720;
@@ -2351,7 +2351,7 @@ const UI = (function(){
   function chat(navyId, key, vars, cls){ const n=navy(navyId); const lines=n.chatter[key]||[]; if(!lines.length) return; const line=fill(lines[Math.floor(Math.random()*lines.length)],vars||{}); toast(line, cls||'chat', 3200); S.chatLog.push({n:S.game?S.game.log.length:0, text:line, navy:n.name}); appendLog('sys chat', '['+n.prefix+'] '+line); Sfx.speak(line, navyId); }
   function appendLog(cls, text, turn){ const box=$('#log'); const d=document.createElement('div'); d.className=cls; if(turn!=null){ const t=document.createElement('span'); t.className='t'; t.textContent='T'+turn; d.appendChild(t); } d.appendChild(document.createTextNode(text)); box.appendChild(d); box.scrollTop=box.scrollHeight; }
   function shipLabel(pid, cls){ const p=S.game.players[pid]; return shipFullName(p.navy||'us', cls); }
-  function linkFor(room){ return location.origin.startsWith('http') ? location.origin+location.pathname+'?room='+room : location.href.split('?')[0]+'?room='+room; }
+  function linkFor(code){ const b=serverBase(); return (b?b+'/':location.href.split('?')[0])+'?g='+code; }
   async function copyLink(){ const url=linkFor(S.room); try{ await navigator.clipboard.writeText(url); toast('Link copied: '+url,'',2500); }catch(e){ prompt('Copy this link', url); } }
   async function shareLink(){ const url=linkFor(S.room); if(navigator.share){ try{ await navigator.share({title:'UNDERWAY — join my battle', text:'Join my naval battle. Room '+S.room, url}); return; }catch(e){ if(e&&e.name==='AbortError') return; } } copyLink(); }
 
@@ -2368,32 +2368,39 @@ const UI = (function(){
   }
 
   /* ---------- persistence ---------- */
-  function save(){ if(!S.room||!S.game) return; Store.save({ room:S.room, role:S.role, mode:S.mode, aiLevel:S.aiLevel, name:S.name, navy:S.navy, game:S.game, net:S.chan?S.chan.snapshot():null, rngState:S.rng?S.rng.state():null,
-    ui:{ sid:S.sid, peerSid:S.peerSid, lobby:S.lobby, pendingFire:S.pendingFire, oppHistory:S.oppHistory, place:{pid:S.place.pid,fleet:S.place.fleet,locked:S.place.locked}, viewAs:S.viewAs, chatLog:S.chatLog.slice(-60), gameOverSent:S.gameOverSent, myRematch:S.myRematch, oppRematch:S.oppRematch, screen:S.screen } }); }
-  function restore(data){
-    S.room=data.room; S.role=data.role; S.mode=data.mode; S.aiLevel=data.aiLevel||'hunter'; S.name=data.name||S.name; S.navy=data.navy; S.game=data.game; const ui=data.ui||{};
+  function sessionObj(gameOverride){
+    return { room:S.room, role:S.role, mode:S.mode, aiLevel:S.aiLevel, name:S.name, navy:S.navy, game:gameOverride||S.game, net:S.rel?S.rel.snapshot():null, rngState:S.rng?S.rng.state():null,
+      ui:{ lobby:S.lobby, pendingFire:S.pendingFire, oppHistory:S.oppHistory, place:{pid:S.place.pid,fleet:S.place.fleet,locked:S.place.locked}, viewAs:S.viewAs, chatLog:S.chatLog.slice(-60), gameOverSent:S.gameOverSent, myRematch:S.myRematch, oppRematch:S.oppRematch, screen:S.screen } };
+  }
+  // Local cache always; in online games the same blob goes to the server, which is the source of truth.
+  function save(){ if(!S.room||!S.game) return; const blob=Store.serialize(sessionObj()); Store.write(S.room, blob); if(S.mode==='net'&&S.sock) S.sock.save(blob); }
+  function applySaved(data){
+    S.room=data.room; S.mode=data.mode; S.aiLevel=data.aiLevel||S.aiLevel; S.name=data.name||S.name; S.navy=data.navy; S.game=data.game; const ui=data.ui||{};
+    if(S.mode!=='net') S.role=data.role;
     Rules.ensure(S.game.players.host); Rules.ensure(S.game.players.guest); S.weapon='shell'; S.targets=[]; S.target=null;
-    S.sid=ui.sid||randomId(); S.peerSid=ui.peerSid||null; S.lobby=Object.assign(S.lobby,ui.lobby||{}); S.pendingFire=ui.pendingFire||null; if(S.pendingFire&&S.pendingFire.x!=null) S.pendingFire={weapon:'shell', cell:{x:S.pendingFire.x,y:S.pendingFire.y}}; S.oppHistory=ui.oppHistory||null; S.place=Object.assign(S.place,ui.place||{}); S.viewAs=ui.viewAs||(S.mode==='net'?S.role:'host'); S.chatLog=ui.chatLog||[]; S.gameOverSent=!!ui.gameOverSent; S.myRematch=!!ui.myRematch; S.oppRematch=!!ui.oppRematch; S.gameOverHandled=false;
+    S.lobby=Object.assign(S.lobby,ui.lobby||{}); S.pendingFire=ui.pendingFire||null; if(S.pendingFire&&S.pendingFire.x!=null) S.pendingFire={weapon:'shell', cell:{x:S.pendingFire.x,y:S.pendingFire.y}};
+    S.oppHistory=ui.oppHistory||null; S.place=Object.assign(S.place,ui.place||{}); S.viewAs=ui.viewAs||(S.mode==='net'?S.role:'host'); S.chatLog=ui.chatLog||[]; S.gameOverSent=!!ui.gameOverSent; S.myRematch=!!ui.myRematch; S.oppRematch=!!ui.oppRematch; S.gameOverHandled=false;
     S.rng=RNG(data.rngState||hashString(S.room));
-    history.replaceState(null,'','?room='+S.room);
-    if(S.mode==='net'){ connect(); if(data.net){ S.chan.restore(data.net); } }
+    if(S.mode==='net'&&S.rel) S.rel.restore(data.net);
+  }
+  function routeByStage(){
     const st=S.game.stage;
     if(st==='lobby'){ showScreen('lobby'); renderLobby(); }
     else if(st==='placement'){ if(S.place.locked){ showScreen('place'); renderPlacement(); $('#place-status').textContent='Fleet locked. Waiting for the opponent…'; } else enterPlacement(S.place.pid||me(), true); }
     else if(st==='battle'){ enterBattle(); }
     else if(st==='over'){ S.gameOverHandled=true; showOver(); }
   }
+  function restore(data){ applySaved(data); history.replaceState(null,'','?room='+S.room); routeByStage(); }
 
   /* ---------- session creation ---------- */
   function newGame(room, mode){ const g=Rules.createGame({room, mode, seed:hashString(room), aiLevel:S.aiLevel, hostName:S.mode==='net'&&S.role==='guest'?'Host':S.name, guestName:mode==='ai'?'Admiral AI':(mode==='hotseat'?'Player 2':'Guest')}); if(mode==='net'&&S.role==='guest') g.players.guest.name=S.name; if(mode==='hotseat') g.players.host.name=S.name||'Player 1'; return g; }
   function resetSessionState(){ S.pendingFire=null; S.oppHistory=null; S.gameOverHandled=false; S.gameOverSent=false; S.myRematch=false; S.oppRematch=false; S.chatLog=[]; S.target=null; S.targets=[]; S.weapon='shell'; S.airDir=true; S.selShip=0; S.place={pid:'host',fleet:null,sel:0,drag:null,locked:false}; S.lobby.hostReady=false; S.lobby.guestReady=false; S.lobby.stage='lobby'; }
-  function startNet(role, code){
-    S.name=($('#home-name').value||'Admiral').trim(); S.settings.name=S.name; Store.saveSettings(S.settings);
-    S.mode='net'; S.role=role; S.room=code.toUpperCase(); S.sid=randomId(); S.peerSid=null; S.navy=null; resetSessionState();
-    S.lobby={hostNavy:null,guestNavy:null,hostName:role==='host'?S.name:'',guestName:role==='guest'?S.name:'',stage:'lobby',guestOnline:false,hostReady:false,guestReady:false,picker:'host',rematch:false,nextFirst:null};
-    S.game=newGame(S.room,'net'); S.viewAs=role; S.rng=RNG(hashString(S.room+S.sid));
-    history.replaceState(null,'','?room='+S.room);
-    connect(); showScreen('lobby'); renderLobby(); save();
+  function startNet(role, code, opts){
+    opts=opts||{}; S.mode='net'; S.role=role; S.room=String(code).toUpperCase(); S.navy=null; S.name=S.admiral?S.admiral.name:(S.settings.name||'Admiral'); resetSessionState(); disconnect(); S.sessionLive=false;
+    S.lobby={hostNavy:null,guestNavy:null,hostName:role==='host'?S.name:'',guestName:role==='guest'?S.name:'',stage:'lobby',guestOnline:false,hostReady:false,guestReady:false,picker:'host',rematch:!!opts.nextFirst,nextFirst:opts.nextFirst||null};
+    S.game=newGame(S.room,'net'); S.viewAs=role; S.rng=RNG(hashString(S.room+S.name));
+    history.replaceState(null,'','?g='+S.room);
+    showScreen('lobby'); renderLobby(); connect();
   }
   function startSolo(mode){
     S.name=($('#home-name').value||'Admiral').trim(); S.settings.name=S.name; Store.saveSettings(S.settings);
@@ -2403,52 +2410,56 @@ const UI = (function(){
     history.replaceState(null,'','?room='+S.room);
     showScreen('lobby'); renderLobby(); save();
   }
-  function leaveToHome(){ disconnect(); if(S.room) Store.remove(S.room); S.room=null; S.game=null; history.replaceState(null,'',location.pathname); hideBanner(); showScreen('home'); renderHome(); }
+  function leaveToHome(){ disconnect(); if(S.room&&S.mode!=='net') Store.remove(S.room); S.room=null; S.game=null; history.replaceState(null,'',location.pathname); hideBanner(); showScreen('home'); renderHome(); }
 
   /* ---------- networking ---------- */
+  function serverBase(){ if(S.settings&&S.settings.server) return S.settings.server.replace(/\/$/,''); return /^https?:/.test(location.origin)?location.origin:null; }
+  function wsUrl(){ const b=serverBase(); return b?b.replace(/^http/,'ws')+'/ws':null; }
+  async function api(path, method, body){
+    const b=serverBase(); if(!b) throw new Error('Online play needs the page served by the UNDERWAY server.');
+    const r=await fetch(b+path,{method:method||'GET', headers:{'content-type':'application/json'}, body:body?JSON.stringify(body):undefined});
+    let d={}; try{ d=await r.json(); }catch(e){}
+    if(!r.ok) throw new Error(d.error||('Server error '+r.status)); return d;
+  }
   function connect(){
-    disconnect();
-    S.chan=new Net.Channel({send:env=>S.link&&S.link.send(env), onMessage:handleMessage, onGap:()=>{ if(S.chan) S.chan.send('RESYNC_REQUEST',{lastSeqIn:S.chan.lastSeqIn}); }});
-    S.link=new Net.Link({role:S.role, code:S.room, peerOpts:peerOptions(), on:{
-      status:(st,detail)=>{ S.linkState=st; renderConn(st,detail); if(st==='online'){ S.signalErrorShown=false; if(document.getElementById('error-title').textContent==='Signaling server unreachable') overlay('ov-error',false); } if(st==='online'&&S.role==='host'){ S.lobby.guestOnline=true; } if(st!=='online'&&S.role==='host'){ S.lobby.guestOnline=false; } if(S.screen==='lobby') renderLobby(); },
-      open:()=>{ sendHello(); S.chan.send('RESYNC_REQUEST',{lastSeqIn:S.chan.lastSeqIn}); S.chan.resendFrom(S.chan.lastAckIn); if(S.role==='host') sendLobby(); },
-      data:env=>{ S.chan.receive(env); },
-      roomFull:()=>{ showError('Room full','That room already has two players. If one of them is your own earlier session, wait a moment and retry; otherwise ask for a new room code.', true); },
-      fatal:msg=>{ showError('Connection problem', msg, true); },
-      signalError:msg=>{ renderConn('reconnecting', msg); if(!S.signalErrorShown){ S.signalErrorShown=true; showError('Signaling server unreachable', 'The PeerJS signaling server could not be reached, so players cannot find each other. Check your connection and retry; the game keeps retrying in the background.', true); } },
+    disconnect(); const url=wsUrl();
+    if(!url||!S.admiral){ showError('Not connected','Online play needs the UNDERWAY server and a signed-in Admiral.', false); return; }
+    S.rel=new Net.Reliable(); S.oppOnline=false;
+    S.sock=new Net.Sock({url, code:S.room, token:S.admiral.token, rel:S.rel, getBlob:()=>Store.serialize(sessionObj()), on:{
+      status:(st,d)=>{ S.linkState=st; renderConn(st,d); if(S.screen==='lobby') renderLobby(); },
+      welcome:w=>onWelcome(w),
+      message:m=>{ const r=S.rel.accept(m.seq); if(r==='dup') return; if(r==='gap'){ S.sock.retryNow(); return; } handleMessage(m.msg.type, m.msg.payload, m); },
+      presence:p=>{ S.oppOnline=!!p.opponentOnline; if(S.role==='host') S.lobby.guestOnline=S.oppOnline; renderConn(S.linkState,''); if(S.screen==='lobby') renderLobby(); },
+      error:e=>{ if(e.fatal) showError('Cannot join this game', e.error||'Unknown error', false); else console.warn('server:', e.error); },
     }});
-    S.link.start();
-    S.tickTimer=setInterval(()=>{ if(S.chan) S.chan.tick(); }, 1000);
+    S.sock.start();
   }
-  // Optional self-hosted signaling server: ?peer=host:port[/path] (or https://host:port/path). Remembered in settings.
-  function peerOptions(){
-    const raw=(S.settings&&S.settings.peer)||''; if(!raw) return null;
-    try{ const u=new URL(/^https?:\/\//.test(raw)?raw:'http://'+raw); return {host:u.hostname, port:parseInt(u.port,10)||(u.protocol==='https:'?443:80), path:u.pathname||'/', secure:u.protocol==='https:'}; }catch(e){ return null; }
+  function onWelcome(w){
+    S.role=w.role; S.oppOnline=!!w.opponentOnline; if(S.role==='host') S.lobby.guestOnline=S.oppOnline; else S.lobby.guestOnline=true;
+    if(!S.sessionLive){
+      // first connection of this page session: the server's copy of our state is the truth
+      if(w.blob&&w.blob.game&&w.blob.room===S.room) applySaved(w.blob);
+      S.viewAs=S.role; S.sessionLive=true;
+      if(w.game){ if(w.game.host) S.lobby.hostName=w.game.host; if(w.game.guest) S.lobby.guestName=w.game.guest; S.game.players.host.name=S.lobby.hostName||S.game.players.host.name; S.game.players.guest.name=S.lobby.guestName||S.game.players.guest.name; }
+      routeByStage();
+    }
+    (w.pending||[]).forEach(m=>{ if(S.rel.accept(m.seq)!=='ok') return; handleMessage(m.type, m.payload, m); });
+    if(S.role==='host' && S.game.stage!=='battle' && S.game.stage!=='over') sendLobby();
+    save(); renderConn(S.linkState,''); if(S.screen==='lobby') renderLobby();
   }
-  function disconnect(){ if(S.link){ S.link.destroy(); S.link=null; } S.chan=null; clearInterval(S.tickTimer); renderConn('offline',''); }
-  function send(type, payload){ if(S.chan) S.chan.send(type, payload); save(); }
-  function sendHello(){ S.chan.send('HELLO',{name:S.name, navy:S.navy, version:CLIENT_VERSION, sid:S.sid, stage:S.game?S.game.stage:'lobby', turn:S.game?S.game.turn:0}); }
+  function disconnect(){ if(S.sock){ S.sock.destroy(); S.sock=null; } S.rel=null; S.oppOnline=false; renderConn('offline',''); }
+  function send(type, payload, gameOverride){ if(!S.sock) return null; const blob=Store.serialize(sessionObj(gameOverride)); Store.write(S.room, blob); return S.sock.send(type, payload, blob); }
+  function sendAwait(type, payload, gameOverride){ return new Promise(res=>{ const item=send(type,payload,gameOverride); if(!item){ res(false); return; } const t0=Date.now(); const iv=setInterval(()=>{ if(!S.rel||!S.rel.outbox.includes(item)){ clearInterval(iv); res(true); } else if(Date.now()-t0>8000){ clearInterval(iv); res(false); } },100); }); }
   function sendLobby(){ if(S.role!=='host'||!S.game||S.game.stage==='battle') return; send('LOBBY_STATE',{hostNavy:S.lobby.hostNavy, guestNavy:S.lobby.guestNavy, hostName:S.lobby.hostName, guestName:S.lobby.guestName, stage:S.lobby.stage, hostReady:S.lobby.hostReady, guestReady:S.lobby.guestReady, rematch:S.lobby.rematch, nextFirst:S.lobby.nextFirst}); }
   function renderConn(st, detail){
-    const label={init:'offline',connecting:'connecting…',registered:'registered',waiting:S.role==='host'?'waiting for opponent':'waiting for host',online:'connected',reconnecting:'reconnecting…',error:'error',closed:'offline',offline:'offline'}[st]||st;
-    ['#lobby-conn','#place-conn','#battle-conn'].forEach(sel=>{ const el=$(sel); if(!el) return; el.className='conn '+(st==='online'?'online':st==='reconnecting'||st==='connecting'||st==='waiting'||st==='registered'?'reconnecting':'offline'); el.querySelector('.txt').textContent=S.mode==='net'?label+(detail&&st!=='online'?' ('+detail+')':''):(S.mode==='ai'?'versus AI':S.mode==='hotseat'?'hotseat':''); });
+    const opp=S.oppOnline?' · opponent online':' · opponent away';
+    const label={init:'offline',connecting:'connecting…',online:'connected'+opp,reconnecting:'reconnecting…',error:'error',closed:'offline',offline:'offline'}[st]||st;
+    ['#lobby-conn','#place-conn','#battle-conn'].forEach(sel=>{ const el=$(sel); if(!el) return; el.className='conn '+(st==='online'?'online':st==='reconnecting'||st==='connecting'?'reconnecting':'offline'); el.querySelector('.txt').textContent=S.mode==='net'?label+(detail&&st!=='online'?' ('+detail+')':''):(S.mode==='ai'?'versus AI':S.mode==='hotseat'?'hotseat':''); });
   }
   function showError(title, text, retry){ $('#error-title').textContent=title; $('#error-text').textContent=text; $('#error-retry').classList.toggle('hidden',!retry); overlay('ov-error',true); }
   function handleMessage(type, p, env){
     p=p||{};
     switch(type){
-      case 'PING': if(S.chan) S.chan.send('PONG',null); break;
-      case 'PONG': case 'ACK': break;
-      case 'HELLO': {
-        if(S.peerSid && p.sid && S.peerSid!==p.sid){
-          // The opponent started a brand-new session: their counters restarted. Reset ours and drop any half-played game.
-          S.chan.seqOut=0; S.chan.lastSeqIn=0; S.chan.lastAckIn=0; S.chan.outbox=[]; S.chan.pending.clear();
-          if(S.game.stage!=='lobby'){ toast('Opponent rejoined with a new session. Back to the lobby.','err',4000); resetToLobby(false); }
-        }
-        S.peerSid=p.sid||S.peerSid;
-        if(S.role==='host'){ S.lobby.guestName=p.name||'Guest'; S.game.players.guest.name=S.lobby.guestName; S.lobby.guestOnline=true; if(p.navy && p.navy!==S.lobby.hostNavy && !S.lobby.guestNavy) S.lobby.guestNavy=p.navy; sendLobby(); }
-        else { S.lobby.hostName=p.name||'Host'; S.game.players.host.name=S.lobby.hostName; }
-        renderLobby(); save(); break; }
       case 'NAVY_PICK': if(S.role==='host'){ if(!p.navy||p.navy===S.lobby.hostNavy||!NAVY_BY_ID[p.navy]){ send('NAVY_REJECTED',{navy:p.navy, reason:'That navy is taken by the host. Please pick another.'}); } else { S.lobby.guestNavy=p.navy; S.game.players.guest.navy=p.navy; } sendLobby(); renderLobby(); save(); } break;
       case 'NAVY_REJECTED': if(S.role==='guest'){ S.navy=null; S.lobby.guestNavy=null; toast(p.reason||'Navy rejected — pick again.','err',3500); Sfx.buzz(); renderLobby(); save(); } break;
       case 'LOBBY_STATE': if(S.role==='guest'){ applyLobby(p); } break;
@@ -2462,9 +2473,7 @@ const UI = (function(){
       case 'RADAR': enqueue(()=>onRemoteRadar(p)); break;
       case 'RADAR_RESULT': enqueue(()=>onRemoteRadarResult(p)); break;
       case 'GAME_OVER': enqueue(()=>onRemoteGameOver(p)); break;
-      case 'REMATCH': S.oppRematch=true; $('#over-status').textContent='Opponent wants a rematch.'; maybeRematch(); save(); break;
-      case 'RESYNC_REQUEST': if(S.chan){ S.chan.resendFrom(p.lastSeqIn); S.chan.send('RESYNC_STATE',{lastSeqIn:S.chan.lastSeqIn, stage:S.game.stage, turn:S.game.turn}); } break;
-      case 'RESYNC_STATE': if(S.chan) S.chan.resendFrom(p.lastSeqIn); break;
+      case 'REMATCH': onRemoteRematch(p); break;
       default: console.warn('unknown message', type, p);
     }
   }
@@ -2480,32 +2489,79 @@ const UI = (function(){
   }
 
   /* ---------- home ---------- */
-  function renderHome(){ $('#home-name').value=S.settings.name||''; const last=Store.getLast(); const has=last&&Store.load(last); $('#resume-panel').classList.toggle('hidden',!has); if(has) $('#resume-last-code').textContent=last; $$('.ailvl').forEach(b=>b.classList.toggle('selected',b.dataset.level===S.aiLevel)); }
+  function loadAdmiral(){ try{ const a=JSON.parse(localStorage.getItem('underway:admiral')||'null'); if(a&&a.token&&a.name) S.admiral=a; }catch(e){} }
+  function saveAdmiral(a){ S.admiral=a; try{ if(a) localStorage.setItem('underway:admiral', JSON.stringify(a)); else localStorage.removeItem('underway:admiral'); }catch(e){} }
+  function renderHome(){
+    $('#home-name').value=S.settings.name||''; const last=Store.getLast(); const saved=last&&Store.load(last); const solo=saved&&saved.mode!=='net';
+    $('#resume-panel').classList.toggle('hidden',!solo); if(solo) $('#resume-last-code').textContent=last;
+    $$('.ailvl').forEach(b=>b.classList.toggle('selected',b.dataset.level===S.aiLevel));
+    const online=!!serverBase();
+    $('#signin-panel').classList.toggle('hidden',!!S.admiral||!online); $('#online-panel').classList.toggle('hidden',!S.admiral||!online);
+    if(S.admiral) $('#adm-label').textContent=S.admiral.name;
+    $('#online-note').textContent=online?'':'Online play needs the page served by the UNDERWAY server (see README). Solo and hotseat work from this file.';
+    $('#mygames').classList.add('hidden');
+  }
+  async function signIn(){
+    const name=$('#adm-name').value.trim(), pin=$('#adm-pin').value.trim();
+    if(name.length<2){ toast('Admiral name needs at least 2 characters','err'); Sfx.buzz(); return; }
+    if(!/^\d{4,8}$/.test(pin)){ toast('PIN must be 4 to 8 digits','err'); Sfx.buzz(); return; }
+    try{ const r=await api('/api/admiral','POST',{name,pin}); saveAdmiral({name:r.name, token:r.token}); S.settings.name=r.name; Store.saveSettings(S.settings); $('#adm-pin').value=''; Sfx.confirm(); toast(r.created?'Welcome aboard, Admiral '+r.name+'.':'Welcome back, Admiral '+r.name+'.','',2600); renderHome(); const pend=S.pendingJoin; S.pendingJoin=null; if(pend) joinGame(pend); }
+    catch(e){ toast(e.message,'err',3600); Sfx.buzz(); }
+  }
+  async function newGame(){ try{ Sfx.confirm(); const r=await api('/api/games','POST',{token:S.admiral.token}); startNet('host', r.code); }catch(e){ toast(e.message,'err',3600); } }
+  async function joinGame(code, opts){
+    code=String(code||'').trim().toUpperCase(); if(code.length!==6){ toast('Enter the 6-character game code.','err'); Sfx.buzz(); return; }
+    if(!S.admiral){ S.pendingJoin=code; showScreen('home'); renderHome(); $('#join-code').value=code; toast('Sign in first — then you join game '+code+' automatically.','',4000); return; }
+    try{ const r=await api('/api/games/'+code+'/join','POST',{token:S.admiral.token}); if(r.status==='finished'){ await openFinishedGame(code); return; } startNet(r.role, code, opts); }
+    catch(e){ if(/over/.test(e.message)){ try{ await openFinishedGame(code); return; }catch(e2){} } toast(e.message,'err',3600); Sfx.buzz(); }
+  }
+  async function myGames(){
+    const box=$('#mygames'); box.classList.remove('hidden'); box.innerHTML='<div class="sub">Loading…</div>';
+    try{ const r=await api('/api/me?token='+encodeURIComponent(S.admiral.token)); if(!r.games.length){ box.innerHTML='<div class="sub">No games yet. Start one and share the code.</div>'; return; }
+      box.innerHTML=''; r.games.forEach(g=>{ const opp=g.role==='host'?(g.guest||'waiting for opponent'):g.host; const row=document.createElement('div'); row.className='playerbox'; row.style.marginBottom='6px';
+        row.innerHTML='<div style="flex:1"><div class="pname"><span class="roomcode" style="font-size:15px">'+g.code+'</span> · vs '+opp+'</div><div class="pnavy">'+g.status+(g.status==='finished'?(' · '+(g.winner===g.role?'you won':'you lost')):'')+(g.hostNavy?' · '+navy(g.hostNavy).name+' vs '+(g.guestNavy?navy(g.guestNavy).name:'?'):'')+'</div></div>';
+        const b=document.createElement('button'); b.className='small primary'; b.textContent=g.status==='finished'?'Replay':'Resume'; b.addEventListener('click',()=>{ Sfx.unlock(); if(g.status==='finished') openFinishedGame(g.code); else joinGame(g.code); }); row.appendChild(b); box.appendChild(row); });
+    }catch(e){ box.innerHTML='<div class="err">'+e.message+'</div>'; }
+  }
+  async function openFinishedGame(code){
+    const r=await api('/api/games/'+code); if(!r.replay) throw new Error('No replay for that code yet');
+    disconnect(); S.mode='net'; S.room=code; S.game=r.replay; Rules.ensure(S.game.players.host); Rules.ensure(S.game.players.guest);
+    S.role=(S.admiral&&r.host===S.admiral.name)?'host':(S.admiral&&r.guest===S.admiral.name)?'guest':'host'; S.viewAs=S.role; S.gameOverHandled=true; S.gameOverSent=true; S.replayOnly=!(S.admiral&&(r.host===S.admiral.name||r.guest===S.admiral.name));
+    history.replaceState(null,'','?g='+code); hideBanner(); showOver(); $('#over-status').textContent='Game '+code+(r.nextCode?' · rematch: '+r.nextCode:'');
+  }
+  async function showLeaderboard(){
+    try{ const r=await api('/api/leaderboard'); showScreen('board'); $('#board-sub').textContent=r.games+' finished game'+(r.games===1?'':'s')+' on this server.';
+      const ta=$('#board-admirals tbody'); ta.innerHTML=''; r.admirals.forEach((a,i)=>{ const best=Object.entries(a.navies).sort((x,y)=>y[1].wins-x[1].wins)[0]; const tr=document.createElement('tr'); tr.innerHTML='<td>'+(i+1)+'</td><td><b>'+a.name+'</b></td><td>'+a.wins+'</td><td>'+a.losses+'</td><td>'+Math.round(a.winRate*100)+'%</td><td>'+Math.round(a.accuracy*100)+'%</td><td>'+(a.fastestWin?a.fastestWin+' turns':'—')+'</td><td>'+(best?navy(best[0]).name+' ('+best[1].wins+'W)':'—')+'</td>'; ta.appendChild(tr); });
+      if(!r.admirals.length) ta.innerHTML='<tr><td colspan="8" class="sub">No finished games yet.</td></tr>';
+      const tn=$('#board-navies tbody'); tn.innerHTML=''; r.navies.forEach(n=>{ const tr=document.createElement('tr'); tr.innerHTML='<td>'+Render.flagSVG(n.navy,30,20)+' '+navy(n.navy).name+'</td><td>'+n.games+'</td><td>'+n.wins+'</td><td>'+(n.bestAdmiral||'—')+'</td>'; tn.appendChild(tr); });
+    }catch(e){ toast(e.message,'err',3600); }
+  }
   function bindHome(){
-    $('#btn-create').addEventListener('click',()=>{ Sfx.unlock(); Sfx.confirm(); startNet('host', randomRoomCode()); });
+    $('#btn-signin').addEventListener('click',()=>{ Sfx.unlock(); signIn(); });
+    $('#adm-pin').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#btn-signin').click(); });
+    $('#btn-signout').addEventListener('click',()=>{ saveAdmiral(null); renderHome(); });
+    $('#btn-newgame').addEventListener('click',()=>{ Sfx.unlock(); newGame(); });
     $('#btn-join-toggle').addEventListener('click',()=>{ Sfx.unlock(); $('#join-panel').classList.toggle('hidden'); $('#join-code').focus(); });
-    $('#btn-join').addEventListener('click',()=>{ const code=$('#join-code').value.trim().toUpperCase(); if(code.length!==6){ toast('Enter the 6-character room code.','err'); Sfx.buzz(); return; } Sfx.unlock(); Sfx.confirm(); joinRoom(code); });
+    $('#btn-join').addEventListener('click',()=>{ Sfx.unlock(); joinGame($('#join-code').value); });
     $('#join-code').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#btn-join').click(); });
+    $('#btn-mygames').addEventListener('click',()=>{ Sfx.unlock(); myGames(); });
+    $('#btn-leaderboard').addEventListener('click',()=>{ Sfx.unlock(); showLeaderboard(); });
+    $('#btn-board-back').addEventListener('click',()=>{ showScreen('home'); renderHome(); });
+    $('#btn-replaycode').addEventListener('click',async()=>{ Sfx.unlock(); const c=prompt('Game code to replay'); if(!c) return; try{ await openFinishedGame(String(c).trim().toUpperCase()); }catch(e){ toast(e.message,'err',3600); } });
     $$('.ailvl').forEach(b=>b.addEventListener('click',()=>{ S.aiLevel=b.dataset.level; $$('.ailvl').forEach(x=>x.classList.toggle('selected',x===b)); Sfx.click(); }));
     $('#btn-ai').addEventListener('click',()=>{ Sfx.unlock(); Sfx.confirm(); startSolo('ai'); });
     $('#btn-hotseat').addEventListener('click',()=>{ Sfx.unlock(); Sfx.confirm(); startSolo('hotseat'); });
-    $('#btn-resume-last').addEventListener('click',()=>{ Sfx.unlock(); const last=Store.getLast(); const d=last&&Store.load(last); if(d) restore(d); else renderHome(); });
+    $('#btn-resume-last').addEventListener('click',()=>{ Sfx.unlock(); const last=Store.getLast(); const d=last&&Store.load(last); if(d&&d.mode!=='net') restore(d); else renderHome(); });
     $('#btn-howto').addEventListener('click',()=>overlay('ov-howto',true)); $('#howto-close').addEventListener('click',()=>overlay('ov-howto',false));
     $('#error-home').addEventListener('click',()=>{ overlay('ov-error',false); leaveToHome(); });
-    $('#error-retry').addEventListener('click',()=>{ overlay('ov-error',false); if(S.link) S.link.retryNow(); else if(S.mode==='net') connect(); });
-  }
-  function joinRoom(code){
-    const saved=Store.load(code);
-    if(saved){ offerResume(saved); return; }
-    startNet('guest', code);
+    $('#error-retry').addEventListener('click',()=>{ overlay('ov-error',false); if(S.sock) S.sock.retryNow(); else if(S.mode==='net') connect(); });
   }
   function offerResume(saved){
-    const g=saved.game; const desc=(saved.mode==='net'?'Online battle as '+saved.role:saved.mode==='ai'?'Battle versus AI':'Hotseat battle')+' — stage: '+g.stage+(g.stage==='battle'?', turn '+g.turn:'')+'.';
+    const g=saved.game; const desc=(saved.mode==='ai'?'Battle versus AI':'Hotseat battle')+' — stage: '+g.stage+(g.stage==='battle'?', turn '+g.turn:'')+'.';
     $('#resume-text').textContent=desc+' Resume where you left off, or abandon it?'; overlay('ov-resume',true);
     $('#resume-yes').onclick=()=>{ overlay('ov-resume',false); Sfx.unlock(); restore(saved); };
-    $('#resume-abandon').onclick=async()=>{ overlay('ov-resume',false); Store.remove(saved.room); if(saved.mode==='net'){ if(saved.role==='guest') startNet('guest', saved.room); else startNet('host', saved.room); } else { history.replaceState(null,'',location.pathname); showScreen('home'); renderHome(); } };
+    $('#resume-abandon').onclick=()=>{ overlay('ov-resume',false); Store.remove(saved.room); history.replaceState(null,'',location.pathname); showScreen('home'); renderHome(); };
   }
-
   /* ---------- lobby ---------- */
   function takenBy(navyId){ const l=S.lobby; if(l.hostNavy===navyId) return 'host'; if(l.guestNavy===navyId) return 'guest'; return null; }
   function myLobbyPid(){ return S.mode==='hotseat'?S.lobby.picker:(S.mode==='net'?S.role:'host'); }
@@ -2518,7 +2574,7 @@ const UI = (function(){
     const grid=$('#navy-grid'); grid.innerHTML='';
     NAVIES.forEach(n=>{ const b=document.createElement('button'); b.className='navybtn'; const owner=takenBy(n.id); const mine=(pid==='host'?l.hostNavy:l.guestNavy)===n.id; if(mine) b.classList.add('selected'); else if(owner) b.classList.add('locked'); b.innerHTML=Render.flagSVG(n.id,64,40)+'<span>'+n.name+'</span>'; b.title=n.prefix+' — '+Object.values(n.ships).join(', '); b.addEventListener('click',()=>pickNavy(n.id)); grid.appendChild(b); });
     let status=''; const startBtn=$('#btn-lobby-start');
-    if(S.mode==='net'){ if(S.role==='host'){ status=l.guestOnline?(l.guestNavy&&l.hostNavy?'Both navies chosen. Confirm to start placing fleets.':'Opponent connected. Choose navies.'):'Share the room code or link. Waiting for an opponent to join…'; startBtn.classList.remove('hidden'); startBtn.disabled=!(l.guestOnline&&l.hostNavy&&l.guestNavy); } else { status=l.hostNavy?'Host has chosen '+navy(l.hostNavy).name+'. Pick your navy; the host confirms.':'Connected. Waiting for the host to choose…'; startBtn.classList.add('hidden'); } }
+    if(S.mode==='net'){ if(S.role==='host'){ status=l.guestOnline?(l.guestNavy&&l.hostNavy?'Both navies chosen. Confirm to start placing fleets.':'Opponent connected. Choose navies.'):(l.guestName?'Opponent '+l.guestName+' is away — the game waits for them.':'Share the game code or link. Waiting for an opponent to join…'); startBtn.classList.remove('hidden'); startBtn.disabled=!(l.guestOnline&&l.hostNavy&&l.guestNavy); } else { status=l.hostNavy?'Host has chosen '+navy(l.hostNavy).name+'. Pick your navy; the host confirms.':'Connected. Waiting for the host to choose…'; startBtn.classList.add('hidden'); } }
     else if(S.mode==='ai'){ status='Pick your navy. The AI ('+S.aiLevel+(S.aiLevel==='admiral'?', maneuvers':', static fleet')+') takes one of the rest.'; startBtn.classList.remove('hidden'); startBtn.disabled=!(l.hostNavy&&l.guestNavy); }
     else { status=(pid==='host'?(l.hostName||'Player 1'):(l.guestName||'Player 2'))+' picks a navy'+(pid==='host'?', then hand over to Player 2.':'.'); startBtn.classList.remove('hidden'); startBtn.textContent=pid==='host'&&!l.guestNavy?'Next: Player 2 picks':'Confirm & place fleets'; startBtn.disabled=pid==='host'?!l.hostNavy:!(l.hostNavy&&l.guestNavy); }
     if(S.mode!=='hotseat') startBtn.textContent='Confirm & place fleets';
@@ -3055,7 +3111,7 @@ const UI = (function(){
 
   /* ---------- game over, cinematic, stats, replay, rematch ---------- */
   function myHistory(){ const p=S.game.players[me()]; return {initialFleet:p.initialFleet, moves:p.moves, fleet:p.fleet}; }
-  function sendGameOver(reason){ if(S.gameOverSent) return; S.gameOverSent=true; send('GAME_OVER',{winner:S.game.winner, reason:reason||S.game.endReason, history:myHistory()}); }
+  function sendGameOver(reason){ if(S.gameOverSent) return; S.gameOverSent=true; send('GAME_OVER',{winner:S.game.winner, reason:reason||S.game.endReason, history:myHistory(), stats:Rules.computeStats(S.game, me())}); }
   function onRemoteGameOver(p){
     const g=S.game; const t=them();
     if(!g.winner){ if(p.reason==='surrender'){ S.game=Rules.surrender(g, t); } else if(p.winner){ S.game.winner=p.winner; S.game.stage='over'; S.game.endReason='fleet'; } }
@@ -3101,19 +3157,25 @@ const UI = (function(){
     row('Ships lost / sunk', st.shipsLost+' / '+st.shipsSunk); row('Enemy accuracy', Math.round(opSt.accuracy*100)+'%');
     if(st.weapons) row('Weapons used', 'MG '+st.weapons.mg+' · torpedoes '+(st.weapons.torpedoes||0)+' · mines '+st.weapons.minesLaid+' ('+st.weapons.mineHits+' struck) · radar '+st.weapons.radar+' · strikes '+st.weapons.airstrikes);
     const canReplay=!!(g.players.host.initialFleet&&g.players.guest.initialFleet); $('#btn-replay').disabled=!canReplay; $('#over-status').textContent=canReplay?'':'Waiting for the opponent\'s move history for the replay…';
-    $('#btn-rematch').disabled=false;
+    $('#btn-rematch').disabled=!!S.replayOnly; $('#btn-rematch').textContent=S.mode==='net'&&S.role!=='host'?'Rematch (host starts)':'Rematch';
   }
   function bindOver(){
     $('#btn-cine-skip').addEventListener('click',()=>Cine.skip()); $('#cineCanvas').addEventListener('pointerdown',()=>Cine.skip());
     $('#btn-replay').addEventListener('click',()=>{ Sfx.unlock(); showScreen('replay'); Replay.open(S.game); });
     $('#btn-replay-back').addEventListener('click',()=>{ Replay.close(); showScreen('over'); });
     $('#btn-over-home').addEventListener('click',async()=>{ if(await confirmDialog('Leave','Leave this room? The finished battle will be forgotten.','Leave')) leaveToHome(); });
-    $('#btn-rematch').addEventListener('click',()=>{ Sfx.unlock(); Sfx.confirm(); S.myRematch=true; $('#btn-rematch').disabled=true; if(S.mode==='net'){ send('REMATCH',{}); $('#over-status').textContent='Rematch requested — waiting for the opponent…'; maybeRematch(); } else startRematch(); });
+    $('#btn-rematch').addEventListener('click',()=>{ Sfx.unlock(); Sfx.confirm(); if(S.mode==='net'){ if(S.replayOnly){ toast('Only the two Admirals of this game can start a rematch.','err'); return; } if(S.role!=='host'){ toast('Ask the host to start the rematch — you will join it automatically.','',3200); return; } $('#btn-rematch').disabled=true; requestRematch(); } else startRematch(); });
   }
-  function maybeRematch(){ if(S.mode!=='net'||!(S.myRematch&&S.oppRematch)) return; if(S.role==='host') startRematch(); }
+  // Online rematch: the host mints a new game code (the old code is finished for good), tells the guest, and both join it. Loser fires first.
+  async function requestRematch(){
+    try{ const loser=Rules.other(S.game.winner); const r=await api('/api/games','POST',{token:S.admiral.token, rematchOf:S.room});
+      $('#over-status').textContent='Rematch game '+r.code+' created — joining…'; await sendAwait('REMATCH',{code:r.code, nextFirst:loser}); startNet('host', r.code, {nextFirst:loser}); }
+    catch(e){ toast(e.message,'err',3600); $('#btn-rematch').disabled=false; }
+  }
+  function onRemoteRematch(p){ if(!p||!p.code) return; $('#over-status').textContent='Host started rematch '+p.code+'. Joining…'; toast('Rematch! Joining game '+p.code+'…','',2500); setTimeout(()=>joinGame(p.code,{nextFirst:p.nextFirst||null}), 500); }
   function startRematch(){
     const loser=Rules.other(S.game.winner); S.lobby.nextFirst=loser; S.lobby.rematch=true; S.lobby.hostReady=false; S.lobby.guestReady=false;
-    resetToLobby(false); if(S.mode==='net') sendLobby(); toast('Rematch: '+S.game.players[loser].name+' fires first. Navies may be re-picked.','',3500);
+    resetToLobby(false); toast('Rematch: '+S.game.players[loser].name+' fires first. Navies may be re-picked.','',3500);
   }
 
   /* ---------- tests screen ---------- */
@@ -3129,16 +3191,18 @@ const UI = (function(){
   function boot(){
     loadSettings(); bindSettings(); bindHome(); bindLobby(); bindPlacement(); bindBattle(); bindOver(); Replay.bind();
     window.addEventListener('resize',()=>{ Object.values(S.oceans).forEach(o=>o&&o.resize()); });
-    document.addEventListener('visibilitychange',()=>{ if(!document.hidden && S.link && S.link.peer && S.link.peer.disconnected){ try{ S.link.peer.reconnect(); }catch(e){} } });
+    document.addEventListener('visibilitychange',()=>{ if(!document.hidden && S.sock && !S.sock.online) S.sock.retryNow(); });
     window.addEventListener('beforeunload',()=>save());
     const params=new URLSearchParams(location.search);
-    if(params.has('peer')){ S.settings.peer=params.get('peer')||''; Store.saveSettings(S.settings); }
+    if(params.has('server')){ S.settings.server=params.get('server')||''; Store.saveSettings(S.settings); }
+    loadAdmiral();
     if(params.get('test')==='1'){ runTestsScreen(); return; }
-    const room=(params.get('room')||'').toUpperCase();
-    if(room){ const saved=Store.load(room); if(saved){ showScreen('home'); renderHome(); offerResume(saved); } else { $('#home-name').value=S.settings.name||''; if(!S.settings.name){ showScreen('home'); renderHome(); $('#join-panel').classList.remove('hidden'); $('#join-code').value=room; toast('Enter your name, then Join to enter room '+room,'',4000); } else startNet('guest', room); } return; }
+    const g=(params.get('g')||'').toUpperCase(); const room=(params.get('room')||'').toUpperCase();
     showScreen('home'); renderHome();
+    if(g){ $('#join-code').value=g; if(S.admiral&&serverBase()) joinGame(g); else { S.pendingJoin=g; toast('Sign in to join game '+g+'.','',4000); } return; }
+    if(room){ const saved=Store.load(room); if(saved&&saved.mode!=='net') offerResume(saved); }
   }
-  return { boot, S, showScreen, toast, runTestsScreen, save, restore, startNet, startSolo };
+  return { boot, S, showScreen, toast, runTestsScreen, save, restore, startNet, startSolo, joinGame, signIn, openFinishedGame, showLeaderboard };
 })();
 
 /* ============================================================
