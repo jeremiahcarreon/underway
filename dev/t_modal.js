@@ -21,7 +21,7 @@ async function run(mobile){
   await b.click('.weapons .wgroup:nth-child(3) button.wpn'); await b.wait(100); const topts=await b.eval(`[...document.querySelectorAll('#wm-opts .opt')].map(x=>x.querySelector('.tag').textContent)`); console.log('torpedo options:', topts.join(' '));
   await b.eval(`[...document.querySelectorAll('#wm-opts .opt')][3].click()`); await b.click('#wm-arm'); await b.wait(100); console.log('torpedo armed dir:', await b.eval(`Underway.UI.S.torpDir+' '+document.getElementById('btn-torpdir').textContent`));
   // air strike modal vertical
-  await b.click('.weapons .wgroup:nth-child(6) button.wpn'); await b.wait(100); await b.eval(`[...document.querySelectorAll('#wm-opts .opt')][1].click()`); await b.click('#wm-arm'); await b.wait(100); console.log('airstrike armed:', await b.eval(`Underway.UI.S.weapon+' airDir='+Underway.UI.S.airDir+' | '+document.getElementById('btn-airdir').textContent));
+  await b.click('.weapons .wgroup:nth-child(6) button.wpn'); await b.wait(100); await b.eval(`[...document.querySelectorAll('#wm-opts .opt')][1].click()`); await b.click('#wm-arm'); await b.wait(100); console.log('airstrike armed:', await b.eval(`Underway.UI.S.weapon+' airDir='+Underway.UI.S.airDir+' | '+document.getElementById('btn-airdir').textContent`));
   // MG modal lists all afloat ships incl. crippled
   await b.click('.weapons .wgroup:nth-child(2) button.wpn'); await b.wait(100); console.log('mg options:', await b.eval(`[...document.querySelectorAll('#wm-opts .opt')].map(x=>x.querySelector('.tag').textContent).join(' | ')`)); await b.click('#wm-cancel');
   console.log('tooltips left on weapon buttons:', await b.eval(`[...document.querySelectorAll('.weapons button')].filter(x=>x.title).length`));
