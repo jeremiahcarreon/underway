@@ -1501,157 +1501,69 @@ const AI = (function(){
 })();
 
 /* ============================================================
-   SECTION 5 — NET LAYER
-   5a. Channel: reliable in-order delivery (seq/ack, retransmit, dedupe) over any transport. Pure enough to unit-test.
-   5b. Link: PeerJS wrapper (host/guest registration, reconnect with backoff, heartbeat, room-full handling).
-   Envelope: { v:1, type, seq, ack, ts, payload }  — seq 0 = unreliable (PING/PONG/ACK/ROOM_FULL).
+   SECTION 5 — NET LAYER (WebSocket relay to the UNDERWAY server)
+   Reliable: pure bookkeeping — outbox of unacknowledged sends (client ids) and the inbound sequence cursor. Testable.
+   Sock: WebSocket wrapper — HELLO/WELCOME, SEND/SENT, SAVE/SAVED, MSG, PING/PONG, PRESENCE, reconnect with backoff.
+   The server stores every message and each player's latest state, so a game survives closed tabs, dead links and new devices.
    ============================================================ */
-const UNRELIABLE = new Set(['PING','PONG','ACK','ROOM_FULL','HELLO','RESYNC_REQUEST','RESYNC_STATE']);
-class Channel {
-  constructor(opts){
-    opts=opts||{};
-    this.transport = opts.send || (()=>{});      // (envelope) => void
-    this.onMessage = opts.onMessage || (()=>{}); // (type, payload, envelope) => void
-    this.onGap = opts.onGap || (()=>{});         // called when out-of-order seq observed
-    this.now = opts.now || (()=>Date.now());
-    this.timeout = opts.timeout || 2500;
-    this.seqOut = 0; this.lastSeqIn = 0; this.lastAckIn = 0;
-    this.outbox = []; this.pending = new Map(); this.stats={sent:0,recv:0,dupes:0,retx:0};
-  }
-  envelope(type, payload, seq){ return { v:PROTOCOL_VERSION, type, seq, ack:this.lastSeqIn, ts:this.now(), payload: payload===undefined?null:payload }; }
-  send(type, payload){
-    if(UNRELIABLE.has(type)){ const env=this.envelope(type,payload,0); this.transport(env); return env; }
-    const env=this.envelope(type,payload,++this.seqOut);
-    this.outbox.push({env, sentAt:this.now(), tries:1}); this.stats.sent++;
-    this.transport(env); return env;
-  }
-  ack(){ this.transport(this.envelope('ACK',null,0)); }
-  receive(env){
-    if(!env||typeof env!=='object'||env.v!==PROTOCOL_VERSION) return false;
-    if(typeof env.ack==='number' && env.ack>this.lastAckIn){ this.lastAckIn=env.ack; this.outbox=this.outbox.filter(o=>o.env.seq>env.ack); }
-    if(!env.seq){ this.onMessage(env.type, env.payload, env); return true; }
-    if(env.seq<=this.lastSeqIn){ this.stats.dupes++; this.ack(); return false; }
-    if(env.seq===this.lastSeqIn+1){
-      this.lastSeqIn=env.seq; this.stats.recv++; this.onMessage(env.type, env.payload, env);
-      while(this.pending.has(this.lastSeqIn+1)){ const e=this.pending.get(this.lastSeqIn+1); this.pending.delete(e.seq); this.lastSeqIn=e.seq; this.stats.recv++; this.onMessage(e.type,e.payload,e); }
-      this.ack(); return true;
-    }
-    this.pending.set(env.seq, env); this.onGap(this.lastSeqIn); this.ack(); return false;
-  }
-  tick(){
-    const t=this.now();
-    this.outbox.forEach(o=>{ if(t-o.sentAt>=this.timeout){ o.sentAt=t; o.tries++; this.stats.retx++; o.env.ack=this.lastSeqIn; this.transport(o.env); } });
-  }
-  resendFrom(remoteLastSeqIn){
-    if(typeof remoteLastSeqIn==='number' && remoteLastSeqIn>this.lastAckIn){ this.lastAckIn=remoteLastSeqIn; this.outbox=this.outbox.filter(o=>o.env.seq>remoteLastSeqIn); }
-    this.outbox.forEach(o=>{ o.sentAt=this.now(); o.env.ack=this.lastSeqIn; this.transport(o.env); });
-  }
-  snapshot(){ return { seqOut:this.seqOut, lastSeqIn:this.lastSeqIn, lastAckIn:this.lastAckIn, outbox:this.outbox.map(o=>o.env) }; }
-  restore(s){ if(!s) return; this.seqOut=s.seqOut||0; this.lastSeqIn=s.lastSeqIn||0; this.lastAckIn=s.lastAckIn||0; this.outbox=(s.outbox||[]).map(env=>({env, sentAt:0, tries:0})); }
+class Reliable {
+  constructor(){ this.outbox=[]; this.lastSeqIn=0; this.counter=0; }
+  newId(){ this.counter++; return Date.now().toString(36)+'-'+this.counter+'-'+Math.random().toString(36).slice(2,8); }
+  queue(type, payload, blob){ const item={id:this.newId(), type, payload:payload===undefined?null:payload, blob, lastSeqIn:this.lastSeqIn, sentAt:0}; this.outbox.push(item); return item; }
+  acked(id){ const i=this.outbox.findIndex(o=>o.id===id); if(i>=0) this.outbox.splice(i,1); return i>=0; }
+  // 'ok' advances the cursor; 'dup' = already processed; 'gap' = a message is missing (ask the server again)
+  accept(seq){ if(typeof seq!=='number') return 'bad'; if(seq<=this.lastSeqIn) return 'dup'; if(seq>this.lastSeqIn+1) return 'gap'; this.lastSeqIn=seq; return 'ok'; }
+  snapshot(){ return { lastSeqIn:this.lastSeqIn, outbox:this.outbox.map(o=>({id:o.id, type:o.type, payload:o.payload, lastSeqIn:o.lastSeqIn})) }; }
+  restore(s){ if(!s) return; this.lastSeqIn=s.lastSeqIn||0; this.outbox=(s.outbox||[]).map(o=>Object.assign({sentAt:0, blob:undefined}, o)); }
 }
-
-// PeerJS link. Emits: status(state, detail), open(), data(env), roomFull(), fatal(message)
-class Link {
-  constructor(opts){
-    this.role=opts.role; this.code=opts.code; this.on=opts.on||{}; this.peerOpts=opts.peerOpts||null;
-    this.hostId='underway-'+this.code.toLowerCase()+'-host'; this.guestId='underway-'+this.code.toLowerCase()+'-guest';
-    this.myId=this.role==='host'?this.hostId:this.guestId;
-    this.peer=null; this.conn=null; this.state='init'; this.lastHeard=0; this.closed=false;
-    this.idTries=0; this.connectTries=0; this.rcTries=0; this.idBusy=false; this.timers={}; this.suffix='';
-  }
+class Sock {
+  constructor(opts){ this.url=opts.url; this.code=opts.code; this.token=opts.token; this.rel=opts.rel||new Reliable(); this.getBlob=opts.getBlob||null; this.on=opts.on||{}; this.ws=null; this.state='init'; this.closed=false; this.tries=0; this.timers={}; this.lastHeard=0; this.pendingSave=null; this.saveInFlight=false; this.welcomes=0; }
   emit(ev, ...a){ if(this.on[ev]) try{ this.on[ev](...a); }catch(e){ console.error(e); } }
-  setState(s, detail){ if(this.state!==s||detail){ this.state=s; this.emit('status', s, detail||''); } }
-  start(){
-    this.closed=false;
-    if(typeof Peer==='undefined'){ this.setState('error','PeerJS failed to load (offline or CDN blocked).'); this.emit('fatal','PeerJS library not available. Check your connection and retry.'); return; }
-    this.setState('connecting','registering');
-    this.openPeer();
-    this.timers.hb=setInterval(()=>this.heartbeat(),5000);
+  setState(st, d){ if(this.state!==st||d){ this.state=st; this.emit('status', st, d||''); } }
+  start(){ this.closed=false; this.open(); this.timers.hb=setInterval(()=>this.heartbeat(), 15000); }
+  open(){
+    if(this.closed) return; this.setState(this.tries?'reconnecting':'connecting');
+    let ws; try{ ws=new WebSocket(this.url); }catch(e){ this.scheduleReopen(); return; } this.ws=ws;
+    ws.onopen=()=>{ this.lastHeard=Date.now(); try{ ws.send(JSON.stringify({type:'HELLO', code:this.code, token:this.token})); }catch(e){} };
+    ws.onmessage=ev=>{ this.lastHeard=Date.now(); let m; try{ m=JSON.parse(ev.data); }catch(e){ return; } this.handle(m); };
+    ws.onclose=()=>{ if(this.ws!==ws) return; this.ws=null; if(this.closed) return; this.setState('reconnecting','connection closed'); this.scheduleReopen(); };
+    ws.onerror=()=>{};
   }
-  openPeer(){
-    if(this.closed) return;
-    this.idBusy=false;
-    try{ if(this.peer){ this.peer.destroy(); } }catch(e){}
-    const id=this.myId+this.suffix;
-    let p;
-    try{ p=new Peer(id,Object.assign({debug:0},this.peerOpts||{})); }catch(e){ this.setState('error',String(e)); this.emit('fatal','Could not create a peer: '+e.message); return; }
-    this.peer=p;
-    p.on('open',()=>{ if(this.closed) return; this.idTries=0; this.rcTries=0; this.setState('registered'); if(this.role==='guest') this.connectToHost(); else this.setState('waiting','waiting for opponent'); });
-    p.on('connection',c=>this.onIncoming(c));
-    p.on('disconnected',()=>{ if(this.closed||this.idBusy) return; this.setState('reconnecting','signaling lost'); clearTimeout(this.timers.rc); this.timers.rc=setTimeout(()=>{ try{ p.reconnect(); }catch(e){ this.openPeer(); } }, this.backoff()); });
-    p.on('close',()=>{ if(this.closed||this.idBusy) return; this.setState('reconnecting','peer closed'); clearTimeout(this.timers.rc); this.timers.rc=setTimeout(()=>this.openPeer(), this.backoff()); });
-    p.on('error',err=>this.onPeerError(err));
-  }
-  onPeerError(err){
-    if(this.closed) return;
-    const t=err&&err.type;
-    if(t==='unavailable-id'){
-      this.idBusy=true; clearTimeout(this.timers.rc); this.idTries++;
-      if(this.idTries<5){ this.setState('connecting','id busy, retrying'); this.timers.rc=setTimeout(()=>this.openPeer(), 1500); }
-      else if(this.role==='guest'){ this.setState('error','room full'); this.emit('roomFull'); }
-      else { this.setState('error','room id is held by another session'); this.emit('fatal','This room id is still held by another session. If you just refreshed, wait a moment and retry.'); }
-    } else if(t==='peer-unavailable'){
-      // Guest arrived before host. Keep polling with backoff.
-      this.connectTries++;
-      const delay=Math.min(8000, 1500+this.connectTries*700);
-      this.setState('waiting','host not online yet');
-      this.timers.rc=setTimeout(()=>this.connectToHost(), delay);
-    } else if(t==='network'||t==='server-error'||t==='socket-error'||t==='socket-closed'){
-      this.setState('reconnecting','signaling server unreachable');
-      clearTimeout(this.timers.rc); this.timers.rc=setTimeout(()=>{ try{ this.peer.reconnect(); }catch(e){ this.openPeer(); } }, this.backoff());
-      this.emit('signalError','The PeerJS signaling server is unreachable. Retrying…');
-    } else if(t==='browser-incompatible'){
-      this.setState('error','browser incompatible'); this.emit('fatal','This browser does not support WebRTC data channels.');
-    } else {
-      console.warn('peer error', err);
-      this.setState('reconnecting', t||'error');
+  scheduleReopen(){ if(this.closed) return; const d=Math.min(15000, 800*Math.pow(1.7, Math.min(this.tries,6))); this.tries++; clearTimeout(this.timers.rc); this.timers.rc=setTimeout(()=>this.open(), d); }
+  handle(m){
+    switch(m.type){
+      case 'WELCOME': this.tries=0; this.welcomes++; this.setState('online'); this.emit('welcome', m); this.flush(true); if(this.pendingSave) this.doSave(); break;
+      case 'MSG': this.emit('message', m); break;
+      case 'SENT': this.rel.acked(m.id); this.emit('sent', m); break;
+      case 'SAVED': this.saveInFlight=false; if(this.pendingSave) this.doSave(); break;
+      case 'PRESENCE': this.emit('presence', m); break;
+      case 'PONG': break;
+      case 'ERROR': this.emit('error', m); if(m.fatal){ this.closed=true; this.setState('error', m.error); try{ this.ws&&this.ws.close(); }catch(e){} } break;
     }
   }
-  // Exponential backoff for signaling reconnects: 1.5 s, 3 s, 6 s, 12 s, then 20 s.
-  backoff(){ const d=Math.min(20000, 1500*Math.pow(2, this.rcTries)); this.rcTries=Math.min(this.rcTries+1, 6); return d; }
-  connectToHost(){
-    if(this.closed||this.role!=='guest'||!this.peer||this.peer.destroyed) return;
-    if(this.peer.disconnected){ try{ this.peer.reconnect(); }catch(e){} this.timers.rc=setTimeout(()=>this.connectToHost(),1500); return; }
-    this.setState('connecting','connecting to host');
-    let c; try{ c=this.peer.connect(this.hostId,{reliable:true,serialization:'json'}); }catch(e){ this.timers.rc=setTimeout(()=>this.connectToHost(),2000); return; }
-    this.adopt(c);
+  send(type, payload, blob){ const item=this.rel.queue(type, payload, blob); this.flush(); return item; }
+  flush(force){
+    if(!this.ws||this.ws.readyState!==1||this.state!=='online') return; const t=Date.now();
+    this.rel.outbox.forEach(o=>{ if(!force && t-o.sentAt<2500) return; o.sentAt=t; o.lastSeqIn=this.rel.lastSeqIn; const blob=o.blob!==undefined?o.blob:(this.getBlob?this.getBlob():undefined);
+      try{ this.ws.send(JSON.stringify({type:'SEND', id:o.id, msg:{type:o.type, payload:o.payload}, blob, lastSeqIn:o.lastSeqIn})); }catch(e){} });
   }
-  onIncoming(c){
-    if(this.role!=='host'){ try{ c.close(); }catch(e){} return; }
-    const active=this.conn && this.conn.open;
-    if(active && c.peer!==this.conn.peer){
-      c.on('open',()=>{ try{ c.send({v:PROTOCOL_VERSION,type:'ROOM_FULL',seq:0,ack:0,ts:Date.now(),payload:null}); }catch(e){} setTimeout(()=>{ try{ c.close(); }catch(e){} },500); });
-      return;
-    }
-    this.adopt(c);
-  }
-  adopt(c){
-    if(this.conn && this.conn!==c){ try{ this.conn.close(); }catch(e){} }
-    this.conn=c;
-    c.on('open',()=>{ if(this.closed) return; this.connectTries=0; this.lastHeard=Date.now(); this.setState('online'); this.emit('open'); });
-    c.on('data',d=>{ this.lastHeard=Date.now(); if(d&&d.type==='ROOM_FULL'){ this.emit('roomFull'); return; } if(this.state!=='online') this.setState('online'); this.emit('data',d); });
-    c.on('close',()=>{ if(this.closed||this.conn!==c) return; this.setState('reconnecting','connection closed'); this.scheduleReconnect(); });
-    c.on('error',e=>{ console.warn('conn error',e); if(this.conn===c){ this.setState('reconnecting','connection error'); this.scheduleReconnect(); } });
-  }
-  scheduleReconnect(){
-    if(this.closed) return;
-    if(this.role==='guest'){ this.connectTries++; const delay=Math.min(8000,1000+this.connectTries*800); clearTimeout(this.timers.rc); this.timers.rc=setTimeout(()=>this.connectToHost(),delay); }
-    // Host: waits for the guest to reconnect; heartbeat keeps the status honest.
+  save(blob){ this.pendingSave=blob; if(!this.saveInFlight) this.doSave(); }
+  doSave(){
+    if(!this.ws||this.ws.readyState!==1||this.state!=='online'||!this.pendingSave) return;
+    const blob=this.pendingSave; this.pendingSave=null; this.saveInFlight=true;
+    try{ this.ws.send(JSON.stringify({type:'SAVE', lastSeqIn:this.rel.lastSeqIn, blob})); }catch(e){ this.saveInFlight=false; this.pendingSave=blob; return; }
+    setTimeout(()=>{ if(this.saveInFlight){ this.saveInFlight=false; if(this.pendingSave) this.doSave(); } }, 4000);
   }
   heartbeat(){
     if(this.closed) return;
-    if(this.conn && this.conn.open){
-      this.send({v:PROTOCOL_VERSION,type:'PING',seq:0,ack:0,ts:Date.now(),payload:null});
-      if(Date.now()-this.lastHeard>10000 && this.state==='online'){ this.setState('reconnecting','no heartbeat'); if(this.role==='guest'){ try{ this.conn.close(); }catch(e){} this.scheduleReconnect(); } }
-    } else if(this.state==='online'){ this.setState('reconnecting','link down'); this.scheduleReconnect(); }
-    if(this.peer && this.peer.disconnected && !this.peer.destroyed){ try{ this.peer.reconnect(); }catch(e){} }
+    if(this.ws&&this.ws.readyState===1){ try{ this.ws.send(JSON.stringify({type:'PING'})); }catch(e){} if(Date.now()-this.lastHeard>45000){ try{ this.ws.close(); }catch(e){} } this.flush(); }
+    else if(!this.ws) this.open();
   }
-  send(env){ if(this.conn && this.conn.open){ try{ this.conn.send(env); return true; }catch(e){ return false; } } return false; }
-  get online(){ return !!(this.conn && this.conn.open); }
-  retryNow(){ this.connectTries=0; this.idTries=0; this.rcTries=0; clearTimeout(this.timers.rc); if(this.role==='guest'){ if(!this.peer||this.peer.destroyed) this.openPeer(); else this.connectToHost(); } else this.openPeer(); }
-  destroy(){ this.closed=true; Object.values(this.timers).forEach(t=>{ clearTimeout(t); clearInterval(t); }); try{ if(this.conn) this.conn.close(); }catch(e){} try{ if(this.peer) this.peer.destroy(); }catch(e){} this.conn=null; this.peer=null; this.setState('closed'); }
+  get online(){ return this.state==='online' && !!this.ws && this.ws.readyState===1; }
+  retryNow(){ this.tries=0; clearTimeout(this.timers.rc); if(this.ws){ const w=this.ws; this.ws=null; try{ w.close(); }catch(e){} } this.closed=false; this.open(); }
+  destroy(){ this.closed=true; clearInterval(this.timers.hb); clearTimeout(this.timers.rc); if(this.ws){ const w=this.ws; this.ws=null; try{ w.close(); }catch(e){} } this.setState('closed'); }
 }
-const Net = { Channel, Link, UNRELIABLE };
+const Net = { Reliable, Sock };const Net = { Channel, Link, UNRELIABLE };
 
 /* ============================================================
    SECTION 6 — PERSISTENCE (localStorage, key underway:<room>)
