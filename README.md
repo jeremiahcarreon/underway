@@ -49,6 +49,29 @@ WebSockets pass through Caddy and Cloudflare without extra configuration.
 18. **Weapons.** Machine-gun bullets and air-strike bombs are recorded as individual shots (they count in shots fired and accuracy). A defender's device stores the opponent's mine positions because it must resolve movement silently; the UI never shows them. Radar contacts are never written to the log or the save. The AI uses shells only, but its moves set off your mines.
 19. **Seeded RNG.** Fleet templates, random fleets, AI, and the coin flip use a seeded generator; radio chatter picks use plain randomness because tests never depend on them.
 
+## Game options
+
+The base game is the classic grid game plus movement: shells only. Everything else is optional per game. The host (or Player 1 in solo and hotseat) sets the options in the lobby; the guest sees them. Presets: **Classic + movement** (shells only), **Full arsenal** (all five extra weapons), **Arsenal + navy abilities**. Options travel with the game, are saved with it, and are recorded on the server. Default for a new game: full arsenal, navy abilities off.
+
+## Navy abilities (optional)
+
+One trade per navy, active only when the game enables navy abilities:
+
+| Navy | Ability | Cost |
+|---|---|---|
+| United States | Carrier air wing: two air strikes per game | Carrier must be undamaged for each |
+| United Kingdom | Type 984 radar: sweep square one size larger | Radar reloads in 10 turns |
+| Japan | Long Lance: torpedo reloads in 5 turns | A torpedo that finds nothing reveals the Submarine |
+| Germany | U-boat: the Submarine fires torpedoes even when damaged | The Submarine can never rotate |
+| France | Minelayer: three mines | Mines never detonate on contact |
+| Italy | MAS boat: the Patrol Boat advances two cells per turn (one if the second is blocked) | The Patrol Boat cannot reverse |
+| Russia | Heavy machine guns: five bullets | Reloads in 12 turns |
+| Australia | Escort screen: once per game, confirming a square you hit within your last three turns costs no shot | Only on such a square, once |
+| Canada | Convoy escort: enemy machine-gun reports show only the class of your firing ship, never its position | No radar |
+| Brazil | Fleet exercise: once per game, move two ships in one turn | Both ships must be undamaged |
+
+The per-navy leaderboard table exists to spot any navy that turns out over- or under-powered once abilities are in play.
+
 ## Weapons (added after the first playtest, to shorten games)
 
 Every weapon replaces your shot for the turn. Pick it in the action bar, then tap the enemy grid. Weapons with choices (machine gun, torpedo, radar, air strike) open a popup that explains the weapon, its downside and reload, and asks for the choice (which ship fires or scans, the torpedo direction, the bomb-line orientation) before you aim; the **?** next to every weapon opens the same popup for reading.
