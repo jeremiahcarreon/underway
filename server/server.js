@@ -20,11 +20,12 @@ const db = new DatabaseSync(path.join(DATA_DIR, 'underway.db'));
 db.exec(`
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS admirals(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, pin_hash TEXT NOT NULL, salt TEXT NOT NULL, token TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, last_seen INTEGER);
-CREATE TABLE IF NOT EXISTS games(code TEXT PRIMARY KEY, status TEXT NOT NULL, host_id INTEGER NOT NULL, guest_id INTEGER, host_navy TEXT, guest_navy TEXT, created_at INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER, winner TEXT, end_reason TEXT, turns INTEGER, rematch_of TEXT, next_code TEXT, host_stats TEXT, guest_stats TEXT);
+CREATE TABLE IF NOT EXISTS games(code TEXT PRIMARY KEY, status TEXT NOT NULL, host_id INTEGER NOT NULL, guest_id INTEGER, host_navy TEXT, guest_navy TEXT, created_at INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER, winner TEXT, end_reason TEXT, turns INTEGER, rematch_of TEXT, next_code TEXT, host_stats TEXT, guest_stats TEXT, options TEXT);
 CREATE TABLE IF NOT EXISTS messages(game_code TEXT NOT NULL, to_role TEXT NOT NULL, seq INTEGER NOT NULL, from_role TEXT NOT NULL, type TEXT NOT NULL, payload TEXT, client_id TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(game_code, to_role, seq));
 CREATE UNIQUE INDEX IF NOT EXISTS messages_client ON messages(game_code, client_id);
 CREATE TABLE IF NOT EXISTS player_state(game_code TEXT NOT NULL, role TEXT NOT NULL, last_seq_in INTEGER NOT NULL DEFAULT 0, blob TEXT, updated_at INTEGER NOT NULL, PRIMARY KEY(game_code, role));
 `);
+try { db.exec('ALTER TABLE games ADD COLUMN options TEXT'); } catch (e) { /* column exists */ }
 const q = {
   admiralByName: db.prepare('SELECT * FROM admirals WHERE name = ?'),
   admiralByToken: db.prepare('SELECT * FROM admirals WHERE token = ?'),
@@ -35,6 +36,7 @@ const q = {
   insertGame: db.prepare('INSERT INTO games(code, status, host_id, created_at, rematch_of) VALUES (?,?,?,?,?)'),
   setGuest: db.prepare('UPDATE games SET guest_id = ? WHERE code = ? AND guest_id IS NULL'),
   setNavies: db.prepare('UPDATE games SET host_navy = COALESCE(?, host_navy), guest_navy = COALESCE(?, guest_navy) WHERE code = ?'),
+  setOptions: db.prepare('UPDATE games SET options = ? WHERE code = ?'),
   setLive: db.prepare("UPDATE games SET status = 'live', started_at = COALESCE(started_at, ?) WHERE code = ? AND status IN ('open','live')"),
   finishGame: db.prepare("UPDATE games SET status = 'finished', finished_at = COALESCE(finished_at, ?), winner = COALESCE(winner, ?), end_reason = COALESCE(end_reason, ?), turns = COALESCE(turns, ?) WHERE code = ?"),
   setStats: db.prepare('UPDATE games SET host_stats = CASE WHEN ? = \'host\' THEN ? ELSE host_stats END, guest_stats = CASE WHEN ? = \'guest\' THEN ? ELSE guest_stats END WHERE code = ?'),
@@ -56,7 +58,7 @@ function newCode() { for (;;) { let c = ''; const b = crypto.randomBytes(6); for
 function roleOf(game, admiralId) { if (!game) return null; if (game.host_id === admiralId) return 'host'; if (game.guest_id === admiralId) return 'guest'; return null; }
 function publicGame(g) {
   const host = q.admiralById.get(g.host_id), guest = g.guest_id ? q.admiralById.get(g.guest_id) : null;
-  return { code: g.code, status: g.status, host: host ? host.name : null, guest: guest ? guest.name : null, hostNavy: g.host_navy, guestNavy: g.guest_navy, createdAt: g.created_at, startedAt: g.started_at, finishedAt: g.finished_at, winner: g.winner, endReason: g.end_reason, turns: g.turns, rematchOf: g.rematch_of, nextCode: g.next_code };
+  return { code: g.code, status: g.status, host: host ? host.name : null, guest: guest ? guest.name : null, hostNavy: g.host_navy, guestNavy: g.guest_navy, options: safeParse(g.options), createdAt: g.created_at, startedAt: g.started_at, finishedAt: g.finished_at, winner: g.winner, endReason: g.end_reason, turns: g.turns, rematchOf: g.rematch_of, nextCode: g.next_code };
 }
 const failures = new Map(); // login throttle: key -> {n, until}
 function throttled(key) { const f = failures.get(key); return !!(f && f.until > now()); }
@@ -172,7 +174,8 @@ function slot(code) { if (!live.has(code)) live.set(code, { host: null, guest: n
 function sendTo(ws, obj) { if (ws && ws.readyState === 1) { try { ws.send(JSON.stringify(obj)); } catch (e) { } } }
 function notePayload(code, type, payload, fromRole) {
   try {
-    if (type === 'LOBBY_STATE' && payload) q.setNavies.run(payload.hostNavy || null, payload.guestNavy || null, code);
+    if (type === 'LOBBY_STATE' && payload) { q.setNavies.run(payload.hostNavy || null, payload.guestNavy || null, code); if (payload.options) q.setOptions.run(JSON.stringify(payload.options), code); }
+    if (type === 'START' && payload && payload.options) q.setOptions.run(JSON.stringify(payload.options), code);
     if (type === 'NAVY_PICK' && payload) q.setNavies.run(fromRole === 'host' ? (payload.navy || null) : null, fromRole === 'guest' ? (payload.navy || null) : null, code);
     if (type === 'START') q.setLive.run(now(), code);
     if (type === 'GAME_OVER' && payload) {
