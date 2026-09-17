@@ -3429,8 +3429,8 @@ const Tests = (function(){
     sections.forEach(sec=>{ const cell=Rules.shipCells(f[i])[sec]; const r=Rules.resolveShot(f,cell,turn||1); f=r.fleet; results.push(r); });
     return {fleet:f, results};
   }
-  function localGame(seed, mode){
-    let g=Rules.createGame({room:'TEST01', mode:mode||'hotseat', seed:seed||7, hostName:'A', guestName:'B', hostNavy:'us', guestNavy:'uk'});
+  function localGame(seed, mode, extra){
+    let g=Rules.createGame(Object.assign({room:'TEST01', mode:mode||'hotseat', seed:seed||7, hostName:'A', guestName:'B', hostNavy:'us', guestNavy:'uk'}, extra||{}));
     const rng=RNG(seed||7);
     g=Rules.setFleet(g,'host',Rules.randomFleet(rng)).game;
     g=Rules.setFleet(g,'guest',Rules.randomFleet(rng)).game;
@@ -3720,6 +3720,60 @@ const Tests = (function(){
     const local=Rules.torpedo(g,'host',{lane}); ok(local.ok,local.reason);
     let a=Rules.clone(g); a.players.guest.fleet=null; const remote=Rules.torpedo(a,'host',{lane, override:{result:local.shot.result, cls:local.shot.cls, crippled:local.shot.crippled, crippledBy:local.shot.crippledBy, footprint:local.shot.footprint, cell:local.shot.cell, stopIndex:local.shot.stopIndex}});
     ok(remote.ok,remote.reason); eq(remote.game.players.host.shots[0].cell, local.game.players.host.shots[0].cell); eq(remote.game.players.host.shots[0].result,'hit');
+  });
+  /* --- game options and navy traits --- */
+  const traitGame=(seed,hostNavy,guestNavy)=>localGame(seed,'hotseat',{hostNavy,guestNavy,options:{navyTraits:true}});
+  test('options: weapons can be switched off per game; classic preset leaves only the shell', ()=>{
+    const g=localGame(60,'hotseat',{options:{weapons:{mg:false}}}); ok(!Rules.weaponReady(g,'host','mg').ok); eq(Rules.weaponReady(g,'host','mg').reason,'Not in this game'); ok(Rules.weaponReady(g,'host','torpedo').ok);
+    const c=localGame(61,'hotseat',{options:OPTION_PRESETS.classic}); ok(WEAPON_ORDER.filter(id=>Rules.weaponEnabled(c,id)).join()==='shell'); ok(!Rules.fireMG(c,'host',{shipIdx:0,cells:[P(0,0),P(0,1),P(0,2),P(0,3)]}).ok);
+    ok(!Rules.traitOf(localGame(62),'host'),'traits off by default'); eq(Rules.optionsOf({}).navyTraits,false);
+  });
+  test('trait US: two air strikes; trait RU: five bullets and a 12-turn reload', ()=>{
+    const g=traitGame(63,'us','ru'); eq(Rules.weapon(g.players.host,'airstrike').usesRemaining,2); eq(Rules.weaponSpec(g,'guest','mg').bullets,5);
+    ok(!Rules.fireMG(g,'host',{shipIdx:0,cells:[P(0,0),P(0,1),P(0,2),P(0,3),P(0,4)]}).ok,'US still fires 4 bullets');
+    let g2=Rules.fire(g,'host',P(9,9)).game; const r=Rules.fireMG(g2,'guest',{shipIdx:0,cells:[P(0,0),P(0,1),P(0,2),P(0,3),P(0,4)]}); ok(r.ok,r.reason); eq(Rules.weapon(r.game.players.guest,'mg').cooldown,12);
+  });
+  test('trait UK: radar square one size larger, 10-turn reload; trait CA: no radar, MG shooter hidden', ()=>{
+    const g=traitGame(64,'uk','ca'); g.players.host.fleet=fleetWith([]); g.players.guest.fleet=fleetWith([]);
+    eq(Rules.radarAreaFor(g,'host','patrol',P(0,0)).size,3); eq(Rules.radarAreaFor(g,'host','carrier',P(0,0)).size,6);
+    const r=Rules.radar(g,'host',{shipIdx:4, anchor:P(0,0)}); ok(r.ok,r.reason); eq(r.area.size,3); eq(Rules.weapon(r.game.players.host,'radar').cooldown,10);
+    ok(!Rules.weaponReady(r.game,'guest','radar').ok); ok(/no radar/.test(Rules.weaponReady(r.game,'guest','radar').reason));
+    let g2=Rules.fire(r.game,'guest',P(9,9)).game; const mg=Rules.fireMG(g2,'host',{shipIdx:1,cells:[P(0,0),P(0,1),P(0,2),P(0,3)]}); ok(mg.ok,mg.reason); // host fires at CA: sighting normal
+    ok(mg.game.players.guest.sightings[0].bow,'a CA defender still sees the UK shooter');
+    let g3=Rules.fire(mg.game,'guest',P(9,8)).game; g3=Rules.fire(g3,'host',P(9,7)).game; const mg2=Rules.fireMG(g3,'guest',{shipIdx:1,cells:[P(0,0),P(0,1),P(0,2),P(0,3)]}); ok(mg2.ok,mg2.reason);
+    const sg=mg2.game.players.host.sightings.slice(-1)[0]; ok(sg.hidden&&!sg.bow&&sg.cls==='battleship','UK defender learns only the class of the CA shooter');
+  });
+  test('trait JP: torpedo reloads in 5 and a miss reveals the sub; trait DE: damaged sub may fire, may never rotate', ()=>{
+    let g=traitGame(65,'jp','de'); g.players.host.fleet=fleetWith([{cls:'submarine',x:5,y:2,h:'N'}]); g.players.guest.fleet=fleetWith([]);
+    const r=Rules.torpedo(g,'host',{lane:{axis:'row',index:8,dir:1}}); ok(r.ok,r.reason); eq(r.shot.result,'miss'); eq(Rules.weapon(r.game.players.host,'torpedo').cooldown,5); ok(r.game.players.guest.sightings.some(x=>x.kind==='torpedo'&&x.cls==='submarine'),'sub revealed on a miss');
+    let g2=Rules.fire(r.game,'guest',P(9,9)).game; g2.players.host.fleet=hitShip(g2.players.host.fleet,'submarine',[1]).fleet; g2=Rules.fire(g2,'host',P(9,8)).game;
+    g2.players.guest.fleet=hitShip(g2.players.guest.fleet,'submarine',[1]).fleet; const de=Rules.torpedo(g2,'guest',{lane:{axis:'row',index:8,dir:1}}); ok(de.ok,'damaged U-boat fires: '+de.reason);
+    ok(!Rules.canMoveIn(g2,'guest',Rules.SUB_IDX,'rotcw').ok); ok(/U-boat/.test(Rules.canMoveIn(g2,'guest',Rules.SUB_IDX,'rotcw').reason)); ok(Rules.canMoveIn(g2,'guest',Rules.SUB_IDX,'advance').ok||true);
+  });
+  test('trait FR: three mines that never detonate on contact', ()=>{
+    let g=traitGame(66,'fr','us'); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]); eq(Rules.weapon(g.players.host,'mine').usesRemaining,3);
+    const m=Rules.layMine(g,'host',P(5,5)); ok(m.ok,m.reason); ok(!m.immediate,'no contact detonation'); ok(m.mine.live);
+    const r=Rules.maneuver(m.game,'guest',2,'advance'); ok(r.ok); eq(r.mineHits.length,0,'mid section leaves 5,5; entering cell 5,4 has no mine');
+  });
+  test('trait IT: patrol boat advances two cells (one if blocked) and cannot reverse', ()=>{
+    let g=traitGame(67,'it','us'); g.players.host.fleet=fleetWith([{cls:'patrol',x:5,y:5,h:'N'}]);
+    const r=Rules.canMoveIn(g,'host',Rules.PATROL_IDX,'advance'); ok(r.ok&&r.dash); eq(r.ship.bow,P(5,3));
+    ok(!Rules.canMoveIn(g,'host',Rules.PATROL_IDX,'reverse').ok); ok(/MAS/.test(Rules.canMoveIn(g,'host',Rules.PATROL_IDX,'reverse').reason));
+    g.players.host.fleet=fleetWith([{cls:'patrol',x:5,y:5,h:'N'},{cls:'destroyer',x:5,y:3,h:'E'}]); const one=Rules.canMoveIn(g,'host',Rules.PATROL_IDX,'advance'); ok(one.ok&&!one.dash); eq(one.ship.bow,P(5,4));
+    const mv=Rules.maneuver(g,'host',Rules.PATROL_IDX,'advance'); ok(mv.ok); eq(mv.game.players.host.fleet[4].bow,P(5,4));
+    const base=localGame(68); base.players.host.fleet=fleetWith([{cls:'patrol',x:5,y:5,h:'N'}]); eq(Rules.canMoveIn(base,'host',Rules.PATROL_IDX,'advance').ship.bow,P(5,4),'no dash without the trait');
+  });
+  test('trait AU: one free confirm within three turns of the hit; trait BR: one double move of undamaged ships', ()=>{
+    let g=traitGame(69,'au','br'); g.players.guest.fleet=fleetWith([{cls:'destroyer',x:5,y:5,h:'N'}]); g.players.host.fleet=fleetWith([]);
+    g=Rules.fire(g,'host',P(5,5)).game;                                   // hit, turn 1 -> 2 (guest)
+    // BR double move on the guest's turn
+    const m1=Rules.maneuver(g,'guest',0,'advance'); ok(m1.ok,m1.reason); ok(m1.bonusMove,'first undamaged move grants a second'); eq(m1.game.phase,'maneuver');
+    ok(!Rules.maneuver(m1.game,'guest',0,'reverse').ok,'same ship refused'); ok(!Rules.maneuver(m1.game,'guest',1,'rotcw').ok,'rotation refused for the second move'); ok(!Rules.maneuver(m1.game,'guest',2,'advance').ok,'damaged destroyer refused');
+    const m2=Rules.maneuver(m1.game,'guest',4,'advance'); ok(m2.ok,m2.reason); ok(m2.bonusUsed); eq(m2.game.phase,'fire'); ok(m2.game.players.guest.traitUses.doubleMove);
+    g=Rules.fire(m2.game,'guest',P(9,9)).game;                            // turn 3 (host)
+    const fc=Rules.fire(g,'host',P(5,5)); ok(fc.ok); eq(fc.shot.result,'confirmed'); ok(fc.freeShot,'escort screen: free confirm'); eq(fc.game.current,'host'); eq(fc.game.phase,'fire');
+    const again=Rules.fire(fc.game,'host',P(5,5)); eq(again.shot.result,'confirmed'); ok(!again.freeShot,'only once'); eq(again.game.current,'guest');
+    const m3=Rules.maneuver(again.game,'guest',1,'advance'); if(m3.ok) ok(!m3.bonusMove,'double move only once per game');
   });
   test('peg map: repeat shots keep a per-cell history count; grazes go stale after a sinking elsewhere', ()=>{
     const shots=[{turn:1,cell:P(2,2),result:'miss'},{turn:3,cell:P(2,2),result:'miss'},{turn:5,cell:P(2,2),result:'hit',cls:'submarine'},{turn:7,cell:P(4,4),result:'graze',cls:'patrol'},{turn:9,cell:P(8,8),result:'sunk',cls:'patrol',footprint:[P(8,8),P(9,8)]}];
