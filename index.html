@@ -951,7 +951,15 @@ const Rules = (function(){
     }
     return s;
   }
-  function canMove(fleet, idx, type){
+  function destinationLegal(fleet, idx, ns){
+    const cells = shipCells(ns);
+    if(cells.some(c=>!inBounds(c))) return {ok:false, reason:'Off the board'};
+    const occ = occupancy(fleet, idx);
+    for(const c of cells){ const k=cellKey(c); if(occ.has(k)){ const b=fleet[occ.get(k)]; return {ok:false, reason: b.sunk?'Blocked by wreck':'Blocked by '+SHIP_CLASSES[b.cls].name}; } }
+    return {ok:true};
+  }
+  // ctx {game, pid} applies navy traits (U-boat: no rotation; MAS boat: two-cell advance, no reverse). Without ctx: base rules.
+  function canMove(fleet, idx, type, ctx){
     const ship = fleet[idx];
     if(!ship||!ship.bow) return {ok:false, reason:'No such ship'};
     if(!MOVE_TYPES.includes(type)) return {ok:false, reason:'Unknown maneuver'};
@@ -959,18 +967,19 @@ const Rules = (function(){
     if(ship.crippled) return {ok:false, reason:'Crippled'};
     const rot = type==='rotcw'||type==='rotccw';
     if(rot && hitCount(ship)>0) return {ok:false, reason:'Damaged ships cannot rotate'};
-    const ns = movedShip(ship, type);
-    const cells = shipCells(ns);
-    if(cells.some(c=>!inBounds(c))) return {ok:false, reason:'Off the board'};
-    const occ = occupancy(fleet, idx);
-    for(const c of cells){
-      const k=cellKey(c);
-      if(occ.has(k)){ const b=fleet[occ.get(k)]; return {ok:false, reason: b.sunk?'Blocked by wreck':'Blocked by '+SHIP_CLASSES[b.cls].name}; }
+    const trait = ctx&&ctx.game ? traitOf(ctx.game, ctx.pid) : null;
+    if(trait&&trait.subNoRotate&&rot&&idx===SUB_IDX) return {ok:false, reason:'U-boat: the Submarine cannot rotate'};
+    if(trait&&trait.patrolDash&&idx===PATROL_IDX){
+      if(type==='reverse') return {ok:false, reason:'MAS boat: no reverse'};
+      if(type==='advance'){ const one=movedShip(ship,'advance'); const two=movedShip(one,'advance'); const l2=destinationLegal(fleet,idx,two); if(l2.ok) return {ok:true, ship:two, dash:true}; const l1=destinationLegal(fleet,idx,one); return l1.ok?{ok:true, ship:one, dash:false}:{ok:false, reason:l1.reason}; }
     }
+    const ns = movedShip(ship, type);
+    const lg = destinationLegal(fleet, idx, ns); if(!lg.ok) return lg;
     return {ok:true, ship:ns};
   }
-  function applyMove(fleet, idx, type){
-    const r = canMove(fleet, idx, type);
+  function canMoveIn(game, pid, idx, type){ const f=game.players[pid].fleet; if(!f) return {ok:false, reason:'No fleet'}; return canMove(f, idx, type, {game, pid}); }
+  function applyMove(fleet, idx, type, ctx){
+    const r = canMove(fleet, idx, type, ctx);
     if(!r.ok) return {ok:false, reason:r.reason, fleet};
     const f = clone(fleet); f[idx]=r.ship;
     return {ok:true, fleet:f, ship:r.ship};
@@ -1042,7 +1051,7 @@ const Rules = (function(){
   function createGame(opts){
     opts=opts||{};
     return { v:1, room:opts.room||'', mode:opts.mode||'net', aiLevel:opts.aiLevel||null, seed:opts.seed||1,
-             stage:'lobby', turn:0, current:null, first:null, phase:'maneuver', maneuvered:false, winner:null, endReason:null,
+             stage:'lobby', turn:0, current:null, first:null, phase:'maneuver', maneuvered:false, maneuveredShip:null, movedShips:[], bonusMove:null, options:normalizeOptions(opts.options), winner:null, endReason:null,
              players:{ host:createPlayer('host',opts.hostName,opts.hostNavy), guest:createPlayer('guest',opts.guestName,opts.guestNavy) },
              log:[], ai:null, rematches:0 };
   }
@@ -1054,16 +1063,25 @@ const Rules = (function(){
     return {ok:true, game:g};
   }
   // Older saves may predate mines/sightings/extra weapons.
-  function ensure(p){ p.mines=p.mines||[]; p.sightings=p.sightings||[]; p.torpedoes=p.torpedoes||[]; p.weapons=p.weapons||[]; WEAPON_ORDER.forEach(id=>{ if(!p.weapons.find(w=>w.id===id)) p.weapons.push({id, cooldown:0, usesRemaining:WEAPONS[id].uses}); }); return p; }
+  function normalizeOptions(o){ const d=clone(DEFAULT_OPTIONS); if(!o) return d; const w=Object.assign({}, d.weapons, o.weapons||{}); return { weapons:w, navyTraits:!!o.navyTraits }; }
+  function optionsOf(game){ return normalizeOptions(game&&game.options); }
+  function weaponEnabled(game, id){ return id==='shell' || optionsOf(game).weapons[id]!==false; }
+  function traitOf(game, pid){ if(!optionsOf(game).navyTraits) return null; const p=game.players[pid]; return (p&&p.navy&&NAVY_TRAITS[p.navy])||null; }
+  function weaponSpec(game, pid, id){ const base=WEAPONS[id]; const t=traitOf(game,pid); const m=t&&t.mod&&t.mod[id]; return m?Object.assign({},base,m):base; }
+  const PATROL_IDX=CLASS_ORDER.indexOf('patrol');
+  function ensure(p){ p.mines=p.mines||[]; p.sightings=p.sightings||[]; p.torpedoes=p.torpedoes||[]; p.traitUses=p.traitUses||{}; p.weapons=p.weapons||[]; WEAPON_ORDER.forEach(id=>{ if(!p.weapons.find(w=>w.id===id)) p.weapons.push({id, cooldown:0, usesRemaining:WEAPONS[id].uses}); }); return p; }
   function weapon(p,id){ ensure(p); return p.weapons.find(w=>w.id===id); }
   function weaponReady(game, pid, id){
     if(!WEAPONS[id]) return {ok:false, reason:'Unknown weapon'};
+    if(!weaponEnabled(game,id)) return {ok:false, reason:'Not in this game'};
+    const spec=weaponSpec(game,pid,id); if(spec.disabled){ const t=traitOf(game,pid); return {ok:false, reason:(t?t.name+': ':'')+'no '+WEAPONS[id].name.toLowerCase()}; }
     const w=weapon(game.players[pid], id);
     if(w.usesRemaining===0) return {ok:false, reason:'No '+WEAPONS[id].name.toLowerCase()+(id==='mine'?'s':'')+' left this game'};
     if(w.cooldown>0) return {ok:false, reason:'Reloading: '+w.cooldown+' more turn'+(w.cooldown===1?'':'s')};
     return {ok:true};
   }
-  function spendWeapon(p,id){ const w=weapon(p,id); w.cooldown=WEAPONS[id].cooldown; if(w.usesRemaining!=null) w.usesRemaining=Math.max(0,w.usesRemaining-1); }
+  function spendWeapon(game, pid, id){ const w=weapon(game.players[pid],id); w.cooldown=weaponSpec(game,pid,id).cooldown; if(w.usesRemaining!=null) w.usesRemaining=Math.max(0,w.usesRemaining-1); }
+  function resetWeapons(game, pid){ const p=ensure(game.players[pid]); p.weapons=WEAPON_ORDER.map(id=>({id, cooldown:0, usesRemaining:weaponSpec(game,pid,id).uses})); p.traitUses={}; }
   function recordShot(g, pid, cell, res, weaponId, extra){
     const ap=g.players[pid];
     const shot=Object.assign({n:g.log.length, turn:g.turn, player:pid, kind:'shot', weapon:weaponId||'shell', cell:{x:cell.x,y:cell.y}, result:res.result, cls:res.cls||null,
@@ -1078,10 +1096,10 @@ const Rules = (function(){
     return false;
   }
   function startBattle(game, first){
-    const g=clone(game); ensure(g.players.host); ensure(g.players.guest); g.stage='battle'; g.turn=1; g.first=first; g.current=first; g.phase='maneuver'; g.maneuvered=false; g.winner=null; g.endReason=null; g.log=[];
+    const g=clone(game); g.options=normalizeOptions(g.options); resetWeapons(g,'host'); resetWeapons(g,'guest'); g.stage='battle'; g.turn=1; g.first=first; g.current=first; g.phase='maneuver'; g.maneuvered=false; g.winner=null; g.endReason=null; g.log=[];
     return g;
   }
-  function endTurn(g){ g.turn+=1; g.current=other(g.current); g.phase='maneuver'; g.maneuvered=false; g.maneuveredShip=null; ensure(g.players[g.current]).weapons.forEach(w=>{ if(w.cooldown>0) w.cooldown--; }); return g; }
+  function endTurn(g){ g.turn+=1; g.current=other(g.current); g.phase='maneuver'; g.maneuvered=false; g.maneuveredShip=null; g.movedShips=[]; g.bonusMove=null; ensure(g.players[g.current]).weapons.forEach(w=>{ if(w.cooldown>0) w.cooldown--; }); return g; }
   function guard(game, pid){
     if(game.stage!=='battle') return 'Battle is not in progress';
     if(game.winner) return 'The battle is over';
@@ -1092,14 +1110,18 @@ const Rules = (function(){
     const err=guard(game,pid); if(err) return {ok:false, reason:err, game};
     if(game.phase!=='maneuver') return {ok:false, reason:'Maneuver phase is over', game};
     const p=game.players[pid]; if(!p.fleet) return {ok:false, reason:'No fleet', game};
-    const mv=canMove(p.fleet, shipIdx, type); if(!mv.ok) return {ok:false, reason:mv.reason, game};
-    const g=clone(game); const gp=g.players[pid]; const opp=ensure(g.players[other(pid)]);
+    const trait=traitOf(game,pid); const rotReq=type==='rotcw'||type==='rotccw';
+    if(game.bonusMove){ if(shipIdx===game.bonusMove.ship) return {ok:false, reason:'Fleet exercise: move a different ship', game}; if(rotReq) return {ok:false, reason:'Fleet exercise: the second ship may only advance or reverse', game}; if(hitCount(p.fleet[shipIdx])>0) return {ok:false, reason:'Fleet exercise: the second ship must be undamaged', game}; }
+    const mv=canMove(p.fleet, shipIdx, type, {game, pid}); if(!mv.ok) return {ok:false, reason:mv.reason, game};
+    const wasUndamaged=hitCount(p.fleet[shipIdx])===0;
+    const g=clone(game); const gp=ensure(g.players[pid]); const opp=ensure(g.players[other(pid)]);
     const oldKeys=new Set(shipCells(gp.fleet[shipIdx]).map(cellKey));
     const from={bow:clone(gp.fleet[shipIdx].bow), heading:gp.fleet[shipIdx].heading};
     gp.fleet[shipIdx]=mv.ship;
     const rec={n:g.log.length, turn:g.turn, player:pid, kind:'move', ship:shipIdx, cls:mv.ship.cls, type, from, to:{bow:clone(mv.ship.bow), heading:mv.ship.heading}};
+    if(mv.dash) rec.dash=true;
     gp.moves.push(rec); g.log.push(rec);
-    g.maneuvered=true; g.maneuveredShip=shipIdx;
+    g.maneuvered=true; g.maneuveredShip=shipIdx; g.movedShips=(g.movedShips||[]).concat([shipIdx]);
     // Enemy mines: any section that ENTERS a mined cell sets it off (a standard hit on that section).
     const mineHits=[];
     for(const c of shipCells(mv.ship)){
@@ -1113,13 +1135,15 @@ const Rules = (function(){
     if(mineHits.length && checkWin(g, opp.id)) return {ok:true, game:g, ended:true, ship, mineHits};
     const rot = type==='rotcw'||type==='rotccw';
     if(rot){ endTurn(g); return {ok:true, game:g, ended:true, ship, mineHits}; }
+    if(g.bonusMove){ gp.traitUses.doubleMove=true; g.bonusMove=null; g.phase='fire'; return {ok:true, game:g, ended:false, ship, mineHits, bonusUsed:true}; }
+    if(trait&&trait.doubleMove&&!gp.traitUses.doubleMove&&wasUndamaged&&!mineHits.length){ g.bonusMove={ship:shipIdx}; g.phase='maneuver'; return {ok:true, game:g, ended:false, ship, mineHits, bonusMove:true}; }
     g.phase='fire';
     return {ok:true, game:g, ended:false, ship, mineHits};
   }
   function skipManeuver(game, pid){
     const err=guard(game,pid); if(err) return {ok:false, reason:err, game};
     if(game.phase!=='maneuver') return {ok:false, reason:'Already in fire phase', game};
-    const g=clone(game); g.phase='fire'; return {ok:true, game:g};
+    const g=clone(game); g.phase='fire'; g.bonusMove=null; return {ok:true, game:g};
   }
   // Fire. If `override` (a result object from the remote defender) is given it is used verbatim; otherwise the
   // defender's fleet must be present locally and is resolved here.
@@ -1134,9 +1158,17 @@ const Rules = (function(){
       if(!dp.fleet) return {ok:false, reason:'Defender fleet unknown', game};
       res=resolveShot(dp.fleet, cell, g.turn); dp.fleet=res.fleet;
     }
+    g.bonusMove=null;
     const shot=recordShot(g, pid, cell, res, 'shell', override?{}:{section:res.section});
-    spendWeapon(ap,'shell');
-    if(!checkWin(g,pid)) endTurn(g);
+    spendWeapon(g,pid,'shell');
+    if(checkWin(g,pid)) return {ok:true, game:g, shot, res};
+    // Escort screen (Australia): one confirm on a square you hit within your last three turns costs no shot.
+    const trait=traitOf(g,pid); ensure(ap);
+    if(trait&&trait.freeConfirm&&!ap.traitUses.freeConfirm&&shot.result===RESULT.CONFIRMED&&!shot.moved){
+      const prevHit=ap.shots.slice(0,-1).filter(x=>x.cell.x===cell.x&&x.cell.y===cell.y&&x.result===RESULT.HIT).pop();
+      if(prevHit && g.turn-prevHit.turn<=6){ ap.traitUses.freeConfirm=true; shot.freeConfirm=true; g.phase='fire'; return {ok:true, game:g, shot, res, freeShot:true}; }
+    }
+    endTurn(g);
     return {ok:true, game:g, shot, res};
   }
   function actionGuard(game, pid, weaponId){
@@ -1164,8 +1196,8 @@ const Rules = (function(){
   // opts: {cells, shipIdx | ship (geometry from a remote attacker), override:{results}}
   function fireMG(game, pid, opts){
     opts=opts||{}; const err=actionGuard(game,pid,'mg'); if(err) return {ok:false, reason:err, game};
-    const cells=opts.cells;
-    if(!Array.isArray(cells)||cells.length!==WEAPONS.mg.bullets||cells.some(c=>!c||!inBounds(c))) return {ok:false, reason:'Pick exactly '+WEAPONS.mg.bullets+' cells', game};
+    const cells=opts.cells; const bullets=weaponSpec(game,pid,'mg').bullets;
+    if(!Array.isArray(cells)||cells.length!==bullets||cells.some(c=>!c||!inBounds(c))) return {ok:false, reason:'Pick exactly '+bullets+' cells', game};
     if(new Set(cells.map(cellKey)).size!==cells.length) return {ok:false, reason:'Each bullet needs its own cell', game};
     const ap=game.players[pid]; const ship=opts.ship||(ap.fleet&&ap.fleet[opts.shipIdx]);
     if(!ship||!ship.bow||ship.sunk) return {ok:false, reason:'Choose a ship that is still afloat to fire from', game};
@@ -1175,8 +1207,9 @@ const Rules = (function(){
     else { if(!dp.fleet) return {ok:false, reason:'Defender fleet unknown', game}; const r=resolveMG(dp.fleet, cells, g.turn); dp.fleet=r.fleet; results=r.results; }
     const group='mg'+g.turn;
     const shots=results.map((res,i)=>recordShot(g, pid, cells[i], res, 'mg', Object.assign({group, bullet:i}, opts.override?{}:{section:res.section})));
-    const sighting={turn:g.turn, kind:'mg', cls:ship.cls, bow:clone(ship.bow), heading:ship.heading, cells:shipCells(ship)};
-    dp.sightings.push(sighting); spendWeapon(gp,'mg');
+    const dt=traitOf(g,def); g.bonusMove=null;
+    const sighting=dt&&dt.hideMGPosition ? {turn:g.turn, kind:'mg', cls:ship.cls, hidden:true} : {turn:g.turn, kind:'mg', cls:ship.cls, bow:clone(ship.bow), heading:ship.heading, cells:shipCells(ship)};
+    dp.sightings.push(sighting); spendWeapon(g,pid,'mg');
     if(!checkWin(g,pid)) endTurn(g);
     return {ok:true, game:g, shots, results, sighting};
   }
@@ -1194,11 +1227,11 @@ const Rules = (function(){
   function torpedo(game, pid, opts){
     opts=opts||{}; const err=actionGuard(game,pid,'torpedo'); if(err) return {ok:false, reason:err, game};
     if(!validLane(opts.lane)) return {ok:false, reason:'Choose a row or column and a direction', game};
-    const ap=game.players[pid];
+    const ap=game.players[pid]; const spec=weaponSpec(game,pid,'torpedo');
     if(ap.fleet){ // the firing fleet is local (own device, AI or hotseat); a defender resolving a remote torpedo trusts the sender
       const sub=ap.fleet[SUB_IDX]; if(!sub||!sub.bow||sub.sunk) return {ok:false, reason:'No Submarine afloat', game};
-      if(hitCount(sub)>0) return {ok:false, reason:'Torpedoes need an undamaged Submarine', game};
-      if(game.maneuvered && game.maneuveredShip===SUB_IDX) return {ok:false, reason:'The Submarine cannot fire on a turn it moved', game};
+      if(!spec.damagedOk && hitCount(sub)>0) return {ok:false, reason:'Torpedoes need an undamaged Submarine', game};
+      if((game.movedShips||[]).includes(SUB_IDX) || (game.maneuvered && game.maneuveredShip===SUB_IDX)) return {ok:false, reason:'The Submarine cannot fire on a turn it moved', game};
     }
     const g=clone(game); const def=other(pid); const dp=ensure(g.players[def]); const gp=ensure(g.players[pid]);
     let res;
@@ -1206,7 +1239,8 @@ const Rules = (function(){
     else { if(!dp.fleet) return {ok:false, reason:'Defender fleet unknown', game}; res=resolveTorpedo(dp.fleet, opts.lane, g.turn); dp.fleet=res.fleet; }
     const shot=recordShot(g, pid, res.cell, res, 'torpedo', Object.assign({lane:opts.lane, stopIndex:res.stopIndex}, opts.override?{}:{section:res.section}));
     dp.torpedoes.push({turn:g.turn, lane:opts.lane, stopIndex:res.stopIndex, cell:{x:res.cell.x,y:res.cell.y}, result:res.result});
-    spendWeapon(gp,'torpedo');
+    if(spec.revealOnMiss && res.result===RESULT.MISS){ const sub=opts.ship||(ap.fleet&&ap.fleet[SUB_IDX]); if(sub&&sub.bow) dp.sightings.push({turn:g.turn, kind:'torpedo', cls:'submarine', bow:clone(sub.bow), heading:sub.heading, cells:shipCells(sub)}); }
+    g.bonusMove=null; spendWeapon(g,pid,'torpedo');
     if(!checkWin(g,pid)) endTurn(g);
     return {ok:true, game:g, shot, res, path:res.path};
   }
@@ -1217,11 +1251,11 @@ const Rules = (function(){
     const g=clone(game); const gp=ensure(g.players[pid]);
     if(gp.mines.some(m=>m.live&&m.cell.x===cell.x&&m.cell.y===cell.y)) return {ok:false, reason:'You already have a mine there', game};
     const mine={id:remoteId||('m'+g.turn+pid), cell:{x:cell.x,y:cell.y}, turn:g.turn, live:true, hitTurn:null};
-    gp.mines.push(mine); spendWeapon(gp,'mine');
+    gp.mines.push(mine); spendWeapon(g,pid,'mine'); g.bonusMove=null;
     g.log.push({n:g.log.length, turn:g.turn, player:pid, kind:'mine', cell:{x:cell.x,y:cell.y}, mineId:mine.id});
     // Laid straight onto an enemy section: it detonates at once (a standard hit; a wreck or burning section gives CONFIRMED).
     let immediate=null; const dp=g.players[other(pid)];
-    if(dp.fleet && dp.fleet.some(sh=>sh.bow&&sectionAt(sh,cell)>=0)){
+    if(!weaponSpec(game,pid,'mine').noContact && dp.fleet && dp.fleet.some(sh=>sh.bow&&sectionAt(sh,cell)>=0)){
       const res=resolveShot(dp.fleet, cell, g.turn); dp.fleet=res.fleet; mine.live=false; mine.hitTurn=g.turn;
       immediate=recordShot(g, pid, cell, res, 'mine', {section:res.section, mineId:mine.id, immediate:true});
     }
@@ -1242,7 +1276,8 @@ const Rules = (function(){
     return {ok:true, game:g, shot};
   }
   /* ---- Radar sweep: square sized by the scanning ship's class; scanning ship must be undamaged ---- */
-  function radarArea(cls, anchor){ const n=SHIP_CLASSES[cls].size; const x=Math.max(0,Math.min(SIZE-n,anchor.x)), y=Math.max(0,Math.min(SIZE-n,anchor.y)); return {x,y,size:n}; }
+  function radarArea(cls, anchor, bonus){ const n=Math.min(SIZE, SHIP_CLASSES[cls].size+(bonus||0)); const x=Math.max(0,Math.min(SIZE-n,anchor.x)), y=Math.max(0,Math.min(SIZE-n,anchor.y)); return {x,y,size:n}; }
+  function radarAreaFor(game, pid, cls, anchor){ return radarArea(cls, anchor, weaponSpec(game,pid,'radar').sizeBonus||0); }
   function inArea(area,c){ return c.x>=area.x&&c.x<area.x+area.size&&c.y>=area.y&&c.y<area.y+area.size; }
   function radarContacts(fleet, area){ const out=[]; fleet.forEach(s=>{ if(!s.bow||s.sunk) return; shipCells(s).forEach((c,sec)=>{ if(inArea(area,c)) out.push({cell:{x:c.x,y:c.y}, cls:s.cls, section:sec, heading:s.heading, damaged:!!s.hits[sec]}); }); }); return out; }
   // opts: {anchor, shipIdx | ship, override:{contacts}}
@@ -1252,12 +1287,12 @@ const Rules = (function(){
     if(!ship||!ship.bow||ship.sunk) return {ok:false, reason:'Choose a ship that is still afloat', game};
     if(!opts.ship && hitCount(ship)>0) return {ok:false, reason:'Radar works only from an undamaged ship', game}; // remote geometry carries no damage state; the sender validated
     if(!opts.anchor||!inBounds(opts.anchor)) return {ok:false, reason:'Off the board', game};
-    const area=radarArea(ship.cls, opts.anchor);
+    const area=radarAreaFor(game, pid, ship.cls, opts.anchor);
     const g=clone(game); const def=other(pid); const dp=ensure(g.players[def]); const gp=ensure(g.players[pid]);
     let contacts;
     if(opts.override){ contacts=opts.override.contacts||[]; } else { if(!dp.fleet) return {ok:false, reason:'Defender fleet unknown', game}; contacts=radarContacts(dp.fleet, area); }
     const sighting={turn:g.turn, kind:'radar', cls:ship.cls, bow:clone(ship.bow), heading:ship.heading, cells:shipCells(ship), area};
-    dp.sightings.push(sighting); spendWeapon(gp,'radar');
+    dp.sightings.push(sighting); g.bonusMove=null; spendWeapon(g,pid,'radar');
     g.log.push({n:g.log.length, turn:g.turn, player:pid, kind:'radar', cls:ship.cls, area, count:contacts.length});
     endTurn(g);
     return {ok:true, game:g, area, contacts, sighting};
@@ -1280,7 +1315,7 @@ const Rules = (function(){
     const group='air'+g.turn;
     const shots=results.map((res,i)=>recordShot(g, pid, cells[i], res, 'airstrike', Object.assign({group, bomb:i}, opts.override?{}:{section:res.section})));
     const sighting={turn:g.turn, kind:'airstrike', cls:'carrier', bow:clone(carrier.bow), heading:carrier.heading, cells:shipCells(carrier)};
-    dp.sightings.push(sighting); spendWeapon(gp,'airstrike');
+    dp.sightings.push(sighting); g.bonusMove=null; spendWeapon(g,pid,'airstrike');
     if(!checkWin(g,pid)) endTurn(g);
     return {ok:true, game:g, shots, results, sighting};
   }
@@ -1357,7 +1392,8 @@ const Rules = (function(){
   return { clone, inBounds, other, makeShip, emptyFleet, shipCells, sternCell, sectionAt, hitCount, mobility, rotateHeading, occupancy,
            canPlace, placeShip, validatePlacement, movedShip, canMove, applyMove, resolveShot, allSunk, sunkCount, randomFleet, templateFleet, TEMPLATES,
            createPlayer, createGame, setFleet, startBattle, endTurn, maneuver, skipManeuver, fire, remoteEndTurn, surrender, resultText, pegMap, classTally, computeStats,
-           ensure, weapon, weaponReady, spendWeapon, checkWin, resolveMG, fireMG, layMine, applyRemoteMineHit, radarArea, inArea, radarContacts, radar, lineCells, isLine, airstrike, SUB_IDX, validLane, torpedoPath, laneName, resolveTorpedo, torpedo };
+           ensure, weapon, weaponReady, spendWeapon, resetWeapons, checkWin, resolveMG, fireMG, layMine, applyRemoteMineHit, radarArea, radarAreaFor, inArea, radarContacts, radar, lineCells, isLine, airstrike, SUB_IDX, PATROL_IDX, validLane, torpedoPath, laneName, resolveTorpedo, torpedo,
+           normalizeOptions, optionsOf, weaponEnabled, traitOf, weaponSpec, canMoveIn, destinationLegal };
 })();
 
 /* ============================================================
