@@ -1522,7 +1522,7 @@ const AI = (function(){
     for(const o of dmg){
       const hitCells=enemy.shots.filter(sh=>(sh.result===RESULT.HIT||sh.result===RESULT.CONFIRMED)&&sh.shipIdx===o.i).slice(-3).map(sh=>sh.cell);
       const lastHit=hitCells[hitCells.length-1]||Rules.shipCells(o.s)[0];
-      const options=['advance','reverse'].map(t=>({t, r:Rules.canMove(fleet,o.i,t)})).filter(x=>x.r.ok);
+      const options=['advance','reverse'].map(t=>({t, r:Rules.canMoveIn(game,pid,o.i,t)})).filter(x=>x.r.ok);
       if(!options.length) continue;
       options.forEach(x=>{ x.score=Rules.shipCells(x.r.ship).reduce((a,c)=>a+Math.abs(c.x-lastHit.x)+Math.abs(c.y-lastHit.y),0); });
       options.sort((a,b)=>b.score-a.score);
@@ -1533,9 +1533,9 @@ const AI = (function(){
       const cells=Rules.shipCells(o.s);
       const bracketed=recentShots.some(sh=>cells.some(c=>Math.abs(c.x-sh.cell.x)+Math.abs(c.y-sh.cell.y)===1));
       if(bracketed && rng.chance(0.5)){
-        const rots=rng.shuffle(['rotcw','rotccw']).filter(t=>Rules.canMove(fleet,o.i,t).ok);
+        const rots=rng.shuffle(['rotcw','rotccw']).filter(t=>Rules.canMoveIn(game,pid,o.i,t).ok);
         if(rots.length){ mem.movesMade++; return {ship:o.i, type:rots[0]}; }
-        const slides=rng.shuffle(['advance','reverse']).filter(t=>Rules.canMove(fleet,o.i,t).ok);
+        const slides=rng.shuffle(['advance','reverse']).filter(t=>Rules.canMoveIn(game,pid,o.i,t).ok);
         if(slides.length){ mem.movesMade++; return {ship:o.i, type:slides[0]}; }
       }
     }
