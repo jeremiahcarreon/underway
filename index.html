@@ -595,6 +595,26 @@ const WEAPONS = {
   airstrike: { id:'airstrike', name:'Air strike',  short:'Strike', cooldown:0,  uses:1,    bombs:3, desc:'Your undamaged Carrier launches a bombing run on three cells in a straight line, horizontal or vertical (Line button, or tap the cell again to flip); every bomb is a full shot. The enemy learns the Carrier\'s position. Once per game.' },
 };
 const WEAPON_ORDER = ['shell','mg','torpedo','mine','radar','airstrike'];
+// Game options: the base game is the classic grid game plus movement (shells only). Everything else is optional per game.
+const DEFAULT_OPTIONS = { weapons:{ mg:true, torpedo:true, mine:true, radar:true, airstrike:true }, navyTraits:false };
+const OPTION_PRESETS = {
+  classic: { weapons:{ mg:false, torpedo:false, mine:false, radar:false, airstrike:false }, navyTraits:false },
+  arsenal: { weapons:{ mg:true, torpedo:true, mine:true, radar:true, airstrike:true }, navyTraits:false },
+  full:    { weapons:{ mg:true, torpedo:true, mine:true, radar:true, airstrike:true }, navyTraits:true },
+};
+// Navy abilities (only when the game enables them). Each is one trade: a strength and a cost. `mod` overrides weapon numbers.
+const NAVY_TRAITS = {
+  us:{ name:'Carrier air wing',   text:'Two air strikes per game.',                                           cost:'The Carrier must still be undamaged for each.',          mod:{ airstrike:{ uses:2 } } },
+  uk:{ name:'Type 984 radar',     text:'Radar sweeps cover a square one size larger.',                       cost:'Radar reloads in 10 turns instead of 8.',              mod:{ radar:{ cooldown:10, sizeBonus:1 } } },
+  jp:{ name:'Long Lance',         text:'Torpedoes reload in 5 turns instead of 8.',                           cost:'A torpedo that finds nothing reveals the Submarine.',    mod:{ torpedo:{ cooldown:5, revealOnMiss:true } } },
+  de:{ name:'U-boat',             text:'The Submarine fires torpedoes even when damaged.',                    cost:'The Submarine can never rotate.',                        mod:{ torpedo:{ damagedOk:true } }, subNoRotate:true },
+  fr:{ name:'Minelayer',          text:'Three mines per game.',                                               cost:'Mines never detonate on contact, only when a section moves onto them.', mod:{ mine:{ uses:3, noContact:true } } },
+  it:{ name:'MAS boat',           text:'The Patrol Boat advances two cells per turn (one if the second is blocked).', cost:'The Patrol Boat cannot reverse.',               patrolDash:true },
+  ru:{ name:'Heavy machine guns', text:'The machine gun fires five bullets.',                                 cost:'It reloads in 12 turns instead of 10.',                mod:{ mg:{ bullets:5, cooldown:12 } } },
+  au:{ name:'Escort screen',      text:'Once per game, confirming a square you hit within your last three turns costs no shot: you fire again.', cost:'Only on such a square, and only once.', freeConfirm:true },
+  ca:{ name:'Convoy escort',      text:'Enemy machine-gun fire tells the enemy only the class of your ship that fired, never its position.', cost:'No radar.', hideMGPosition:true, mod:{ radar:{ disabled:true } } },
+  br:{ name:'Fleet exercise',     text:'Once per game, move two ships in one turn (advance or reverse).',     cost:'Both ships must be undamaged.',                          doubleMove:true },
+};
 const RESULT = { MISS:'miss', HIT:'hit', CONFIRMED:'confirmed', SUNK:'sunk', GRAZE:'graze' };
 
 /* ---- Flag DSL: normalized coordinates (x in 0..1 of width, y in 0..1 of height, r in units of height) ---- */
