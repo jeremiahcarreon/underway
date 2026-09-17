@@ -2342,14 +2342,14 @@ const Anim = (function(){
   /* ---------- maneuver (owner's screen only) ---------- */
   async function playManeuver(o, shipIdx, type, fromShip, toShip){
     const c=o.cell; const n=SHIP_CLASSES[fromShip.cls].size; const rot=type==='rotcw'||type==='rotccw';
-    const dur=rot?950:650; Sfx.engine(dur*scale(), rot);
+    const steps=rot?1:Math.max(1,Math.abs(toShip.bow.x-fromShip.bow.x)+Math.abs(toShip.bow.y-fromShip.bow.y)); const dur=rot?950:650*Math.sqrt(steps); Sfx.engine(dur*scale(), rot);
     o.shipFx[shipIdx]={offset:{x:0,y:0},angleOffset:0}; onCleanup(()=>{ delete o.shipFx[shipIdx]; });
     const d=DIR[fromShip.heading]; const sign=type==='advance'?1:type==='reverse'?-1:0;
     const fromCells=Rules.shipCells(fromShip); const stern=o.cellCenter(fromCells[n-1]); const a0=Render.HEAD_ANGLE[fromShip.heading]; const dth=(type==='rotcw'?1:-1)*Math.PI/2; const R=(n-1)/2*c;
     const c0={x:stern.x+Math.cos(a0)*R, y:stern.y+Math.sin(a0)*R};
     fx(o,dur,(ctx,p)=>{
       const e=ease.inOut(p); const f=o.shipFx[shipIdx]; if(!f) return;
-      if(!rot){ f.offset={x:d.x*sign*e*c, y:d.y*sign*e*c}; ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.lineWidth=Math.max(1,c*0.08); const sc=o.cellCenter(fromCells[sign>0?n-1:0]); ctx.beginPath(); ctx.moveTo(sc.x,sc.y); ctx.lineTo(sc.x+d.x*sign*e*c*0.9, sc.y+d.y*sign*e*c*0.9); ctx.stroke(); }
+      if(!rot){ f.offset={x:d.x*sign*e*c*steps, y:d.y*sign*e*c*steps}; ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.lineWidth=Math.max(1,c*0.08); const sc=o.cellCenter(fromCells[sign>0?n-1:0]); ctx.beginPath(); ctx.moveTo(sc.x,sc.y); ctx.lineTo(sc.x+d.x*sign*e*c*0.9, sc.y+d.y*sign*e*c*0.9); ctx.stroke(); }
       else { const th=a0+dth*e; f.angleOffset=dth*e; f.offset={x:stern.x+Math.cos(th)*R-c0.x, y:stern.y+Math.sin(th)*R-c0.y}; ctx.strokeStyle='rgba(255,255,255,0.4)'; ctx.lineWidth=Math.max(1,c*0.08); ctx.beginPath(); const Rb=(n-1)*c; ctx.arc(stern.x,stern.y,Rb,a0,a0+dth*e,dth<0); ctx.stroke(); }
     },{onEnd:()=>{ delete o.shipFx[shipIdx]; }});
     await wait(dur); delete o.shipFx[shipIdx];
