@@ -1212,8 +1212,8 @@ const Rules = (function(){
     else { if(!dp.fleet) return {ok:false, reason:'Defender fleet unknown', game}; const r=resolveMG(dp.fleet, cells, g.turn); dp.fleet=r.fleet; results=r.results; }
     const group='mg'+g.turn;
     const shots=results.map((res,i)=>recordShot(g, pid, cells[i], res, 'mg', Object.assign({group, bullet:i}, opts.override?{}:{section:res.section})));
-    const dt=traitOf(g,def); g.bonusMove=null;
-    const sighting=dt&&dt.hideMGPosition ? {turn:g.turn, kind:'mg', cls:ship.cls, hidden:true} : {turn:g.turn, kind:'mg', cls:ship.cls, bow:clone(ship.bow), heading:ship.heading, cells:shipCells(ship)};
+    const at=traitOf(g,pid); g.bonusMove=null;
+    const sighting=at&&at.hideMGPosition ? {turn:g.turn, kind:'mg', cls:ship.cls, hidden:true} : {turn:g.turn, kind:'mg', cls:ship.cls, bow:clone(ship.bow), heading:ship.heading, cells:shipCells(ship)};
     dp.sightings.push(sighting); spendWeapon(g,pid,'mg');
     if(!checkWin(g,pid)) endTurn(g);
     return {ok:true, game:g, shots, results, sighting};
