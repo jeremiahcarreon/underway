@@ -7,7 +7,7 @@ A two-player, browser-based naval combat game where the fleets can move. The who
 ## Running the server
 
 ```
-docker compose up -d --build      # serves the game on http://127.0.0.1:8931
+docker compose up -d --build      # serves the game on port 8931 on every interface (http://<your-lan-ip>:8931 for phones on the same Wi-Fi)
 ```
 Data (games, replays, admirals) lives in the `underway-data` volume as one SQLite file. Without Docker: `cd server && npm install && npm start` (env `PORT`, `DATA_DIR`).
 
@@ -46,7 +46,7 @@ WebSockets pass through Caddy and Cloudflare without extra configuration.
 15. **Server relay.** Each side is still authoritative over its own ocean (the server never sends one player's fleet to the other), but the server stores both players' latest views and every message with per-direction sequence numbers, and replays whatever a rejoining player has not yet acknowledged. Your own ships never leave your device except to your saved state on your own server.
 16. **Third connection.** A game has exactly two Admirals; a third sign-in trying the code is refused. A player can be connected from only one tab at a time (a newer connection replaces the older).
 17. **Hotseat cinematic** plays the winner's view once for both players.
-18. **Weapons.** Machine-gun bullets and air-strike bombs are recorded as individual shots (they count in shots fired and accuracy). A defender's device stores the opponent's mine positions because it must resolve movement silently; the UI never shows them. Radar contacts are never written to the log or the save. The AI uses shells only, but its moves set off your mines.
+18. **Weapons.** Machine-gun bullets and air-strike bombs are recorded as individual shots (they count in shots fired and accuracy). A defender's device stores the opponent's mine positions because it must resolve movement silently; the UI never shows them. Radar contacts are never written to the log or the save. Admiral and Fleet Admiral use the weapons the game enables; the AI's moves set off your mines.
 19. **Seeded RNG.** Fleet templates, random fleets, AI, and the coin flip use a seeded generator; radio chatter picks use plain randomness because tests never depend on them.
 
 ## Game options
@@ -112,7 +112,7 @@ Reloads count your own turns and tick down at the start of each of your turns. W
 21. Refresh either browser mid-battle: Resume restores fleet, pegs, turn and phase and reconnects; go offline briefly: "reconnecting…" then resumes with no lost messages.
 22. Sink the fifth ship: the game ends at once, each side plays its cinematic, the stats card matches the log, and the Reveal replay scrubs through every turn including the silent moves.
 23. Host presses Rematch: a new code is minted, the guest joins it automatically, navies are re-pickable, the loser fires first; the old code serves the replay.
-24. Versus AI on Random, Hunter and Admiral each play to completion; Random wanders (random legal moves half the time), Hunter keeps a static fleet, Admiral (the default) re-fires hit cells to confirm and moves its damaged ships between your shots.
+24. Versus AI on Hunter, Admiral and Fleet Admiral each play to completion; Hunter keeps a static fleet and fires shells only, Admiral (the default) re-fires hit cells to confirm, moves damaged ships, lays mines at the ends of a damaged ship's line and machine-guns around a lone hit, Fleet Admiral adds a probability map, radar sweeps, torpedoes and air strikes.
 25. Hotseat: a curtain hides both oceans between placement and every turn.
 26. `?test=1` shows every case PASS (58 cases).
 27. On a phone in portrait: no horizontal scrolling, cells at least 32 px, tabs switch oceans, tap a cell then tap FIRE.
