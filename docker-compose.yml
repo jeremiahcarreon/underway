@@ -5,7 +5,7 @@ services:
     container_name: underway
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8931:8931"   # loopback only; expose via cloudflared or your Caddy reverse proxy
+      - "8931:8931"   # all interfaces: phones on your Wi-Fi reach http://<this-machine-ip>:8931; Caddy/cloudflared can front it too
     volumes:
       - underway-data:/data      # SQLite database: games, replays, admirals, leaderboard
     environment:
