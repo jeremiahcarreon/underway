@@ -1549,7 +1549,6 @@ const AI = (function(){
   function chooseShot(game, pid, rng){
     const p=game.players[pid]; const mem=game.ai;
     switch(mem.level){
-      case 'random': return randomShot(p.shots, rng);
       case 'hunter': return hunterShot(p.shots, mem, rng);
       case 'fleet': return fleetShot(game, pid, mem, rng);
       default: return admiralShot(p.shots, mem, rng);
@@ -1604,12 +1603,7 @@ const AI = (function(){
   // Maneuver selection (Admiral only): move damaged ships away from recent hits; sometimes rotate undamaged ships out of a bracket.
   function chooseManeuver(game, pid, rng){
     const mem=game.ai; if(!mem) return null;
-    if(mem.level==='random'){ // Random wanders: half the turns it makes a random legal move with a random ship (rotations included)
-      if(!rng.chance(0.5)) return null; const f=game.players[pid].fleet; if(!f) return null; const cands=[];
-      f.forEach((sh,i)=>{ if(sh.sunk||sh.crippled) return; MOVE_TYPES.forEach(t=>{ if(Rules.canMoveIn(game,pid,i,t).ok) cands.push({ship:i,type:t}); }); });
-      if(cands.length) mem.movesMade++; return cands.length?rng.pick(cands):null;
-    }
-    if(mem.level!=='admiral') return null;
+    if(mem.level!=='admiral'&&mem.level!=='fleet') return null;
     const p=game.players[pid], enemy=game.players[Rules.other(pid)], fleet=p.fleet; if(!fleet) return null;
     const recentShots=enemy.shots.slice(-6);
     const dmg=fleet.map((s,i)=>({s,i})).filter(o=>!o.s.sunk&&!o.s.crippled&&Rules.hitCount(o.s)>0);
@@ -1650,7 +1644,7 @@ const AI = (function(){
     if(!fr.ok) return {game:g, move, shot:null, rotated:false, error:fr.reason};
     return {game:fr.game, move, shot:fr.shot, rotated:false, action:{weapon:'shell', shot:fr.shot}};
   }
-  const LEVELS=['random','hunter','admiral','fleet'];
+  const LEVELS=['hunter','admiral','fleet'];
   return { initMemory, placeFleet, chooseShot, chooseManeuver, takeTurn, randomShot, hunterShot, admiralShot, fleetShot, densityMap, planWeapon, liveHits, LEVELS };
 })();
 
