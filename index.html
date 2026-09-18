@@ -3547,8 +3547,8 @@ const Cine = (function(){
     const mine=(data.me.fleet||[]).filter(sh=>!sh.sunk); const cnt=Math.max(1,mine.length); const sw=Math.min(W*0.42, W*0.9/cnt); const sh_h=sw*0.34;
     mine.forEach((sh,i)=>{ const x=W*0.05+i*(W*0.9/cnt)+(W*0.9/cnt-sw)/2, y=horizon+H*0.05+i*H*0.02+Math.sin(t*0.8+i)*3;
       Render.drawShipSide(ctx,sh.cls,data.me.navyId,x,y,sw,sh_h,{hits:sh.hits,mobility:Rules.mobility(sh),t:t*1000});
-      const uni=navy(data.me.navyId).uniform; const nS=Math.max(4,Math.round(sw/26)); const deckY=y+sh_h*0.62-sh_h*0.36*0.15;
-      for(let k=0;k<nS;k++){ const sx=x+sw*0.1+k*(sw*0.78/(nS-1)); const saluteAt=4+i*0.6+k*0.18; const pose=t>saluteAt?'salute':'stand'; Render.drawSailor(ctx,sx,deckY,Math.max(9,sh_h*0.42),uni,pose,t*1000,k+i*10); }
+      const uni=navy(data.me.navyId).uniform; const nS=Math.max(3,Math.min(6,Math.round(sw/70))); const deckY=y+sh_h*0.62-sh_h*0.36*0.15;
+      for(let k=0;k<nS;k++){ const sx=x+sw*0.14+k*(sw*0.72/Math.max(1,nS-1)); const saluteAt=4+i*0.6+k*0.18; const pose=t>saluteAt?'salute':'stand'; Render.drawSailor(ctx,sx,deckY,Math.max(12,sh_h*0.55),uni,pose,t*1000,k+i*10); }
     });
   }
   function drawDefeat(W,H,t){
