@@ -291,7 +291,8 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
         <span class="sub">AI level</span>
         <button class="small ailvl" data-level="random" title="Random legal shots and random moves.">Random · wanders</button>
         <button class="small ailvl" data-level="hunter" title="Checkerboard hunt, then brackets hits. Never moves its ships.">Hunter · static</button>
-        <button class="small ailvl selected" data-level="admiral" title="Hunter plus movement: re-fires to confirm, moves damaged ships, rotates out of brackets.">Admiral · maneuvers</button>
+        <button class="small ailvl selected" data-level="admiral" title="Hunter plus movement: re-fires to confirm, moves damaged ships, rotates out of brackets, lays mines and machine-guns around hits.">Admiral · maneuvers</button>
+        <button class="small ailvl" data-level="fleet" title="Admiral plus a probability map, radar sweeps, torpedoes, air strikes and mines — every weapon the game enables.">Fleet Admiral · everything</button>
       </div>
       <div class="grid2">
         <button id="btn-ai">Versus AI</button>
@@ -472,7 +473,7 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
     <div style="overflow-x:auto"><table class="tests" id="board-navies"><thead><tr><th>Navy</th><th>Games</th><th>Wins</th><th>Best Admiral</th></tr></thead><tbody></tbody></table></div>
     <h3 style="margin-top:14px">Versus the AI</h3>
     <div class="sub" id="board-ai-note" style="margin-bottom:6px"></div>
-    <div style="overflow-x:auto"><table class="tests" id="board-ai"><thead><tr><th>Admiral</th><th>Wins</th><th>Losses</th><th>Random</th><th>Hunter</th><th>Admiral AI</th></tr></thead><tbody></tbody></table></div>
+    <div style="overflow-x:auto"><table class="tests" id="board-ai"><thead><tr><th>Admiral</th><th>Wins</th><th>Losses</th><th>Random</th><th>Hunter</th><th>Admiral AI</th><th>Fleet Admiral</th></tr></thead><tbody></tbody></table></div>
   </div>
 </section>
 
