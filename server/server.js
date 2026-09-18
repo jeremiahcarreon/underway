@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS admirals(id INTEGER PRIMARY KEY, name TEXT NOT NULL U
 CREATE TABLE IF NOT EXISTS games(code TEXT PRIMARY KEY, status TEXT NOT NULL, host_id INTEGER NOT NULL, guest_id INTEGER, host_navy TEXT, guest_navy TEXT, created_at INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER, winner TEXT, end_reason TEXT, turns INTEGER, rematch_of TEXT, next_code TEXT, host_stats TEXT, guest_stats TEXT, options TEXT);
 CREATE TABLE IF NOT EXISTS messages(game_code TEXT NOT NULL, to_role TEXT NOT NULL, seq INTEGER NOT NULL, from_role TEXT NOT NULL, type TEXT NOT NULL, payload TEXT, client_id TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(game_code, to_role, seq));
 CREATE UNIQUE INDEX IF NOT EXISTS messages_client ON messages(game_code, client_id);
+CREATE TABLE IF NOT EXISTS solo_games(admiral_id INTEGER NOT NULL, code TEXT NOT NULL, mode TEXT NOT NULL, ai_level TEXT, status TEXT NOT NULL, navy TEXT, opp_navy TEXT, winner TEXT, turns INTEGER, stats TEXT, options TEXT, blob TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(admiral_id, code));
 CREATE TABLE IF NOT EXISTS player_state(game_code TEXT NOT NULL, role TEXT NOT NULL, last_seq_in INTEGER NOT NULL DEFAULT 0, blob TEXT, updated_at INTEGER NOT NULL, PRIMARY KEY(game_code, role));
 `);
 try { db.exec('ALTER TABLE games ADD COLUMN options TEXT'); } catch (e) { /* column exists */ }
@@ -48,6 +49,10 @@ const q = {
   pending: db.prepare('SELECT seq, from_role, type, payload, ts FROM messages WHERE game_code = ? AND to_role = ? AND seq > ? ORDER BY seq'),
   state: db.prepare('SELECT last_seq_in, blob, updated_at FROM player_state WHERE game_code = ? AND role = ?'),
   upsertState: db.prepare('INSERT INTO player_state(game_code, role, last_seq_in, blob, updated_at) VALUES (?,?,?,?,?) ON CONFLICT(game_code, role) DO UPDATE SET last_seq_in = MAX(player_state.last_seq_in, excluded.last_seq_in), blob = excluded.blob, updated_at = excluded.updated_at'),
+  soloUpsert: db.prepare('INSERT INTO solo_games(admiral_id, code, mode, ai_level, status, navy, opp_navy, winner, turns, stats, options, blob, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(admiral_id, code) DO UPDATE SET mode=excluded.mode, ai_level=excluded.ai_level, status=excluded.status, navy=excluded.navy, opp_navy=excluded.opp_navy, winner=excluded.winner, turns=excluded.turns, stats=excluded.stats, options=excluded.options, blob=excluded.blob, updated_at=excluded.updated_at'),
+  soloList: db.prepare('SELECT code, mode, ai_level, status, navy, opp_navy, winner, turns, options, created_at, updated_at FROM solo_games WHERE admiral_id = ? ORDER BY updated_at DESC LIMIT 60'),
+  soloGet: db.prepare('SELECT * FROM solo_games WHERE admiral_id = ? AND code = ?'),
+  soloFinished: db.prepare("SELECT s.admiral_id, a.name, s.ai_level, s.winner, s.turns FROM solo_games s JOIN admirals a ON a.id = s.admiral_id WHERE s.mode = 'ai' AND s.status = 'finished'"),
   finished: db.prepare("SELECT g.*, h.name AS host_name, u.name AS guest_name FROM games g JOIN admirals h ON h.id = g.host_id LEFT JOIN admirals u ON u.id = g.guest_id WHERE g.status = 'finished' AND g.winner IS NOT NULL"),
 };
 const now = () => Date.now();
@@ -107,7 +112,10 @@ function leaderboard() {
   });
   const admirals = [...adm.values()].map(a => Object.assign(a, { winRate: a.games ? a.wins / a.games : 0, accuracy: a.shots ? a.hits / a.shots : 0 })).sort((x, y) => y.wins - x.wins || y.winRate - x.winRate || y.accuracy - x.accuracy || x.name.localeCompare(y.name));
   const byNavy = [...navies.values()].map(n => { const best = Object.entries(n.admirals).sort((a, b) => b[1] - a[1])[0]; return { navy: n.navy, games: n.games, wins: n.wins, bestAdmiral: best ? best[0] : null, bestWins: best ? best[1] : 0 }; }).sort((a, b) => b.wins - a.wins || a.navy.localeCompare(b.navy));
-  return { admirals, navies: byNavy, games: rows.length };
+  const ai = new Map();
+  q.soloFinished.all().forEach(r => { const a = bump(ai, r.admiral_id, () => ({ name: r.name, games: 0, wins: 0, losses: 0, levels: {} })); a.games++; const won = r.winner === 'me'; if (won) a.wins++; else a.losses++; const lv = a.levels[r.ai_level || 'unknown'] || (a.levels[r.ai_level || 'unknown'] = { wins: 0, losses: 0 }); if (won) lv.wins++; else lv.losses++; });
+  const vsAI = [...ai.values()].sort((x, y) => y.wins - x.wins || x.losses - y.losses || x.name.localeCompare(y.name));
+  return { admirals, navies: byNavy, games: rows.length, vsAI, notes: { ranking: 'The ranking counts finished games between two signed-in Admirals. Solo games against the AI are recorded separately below and do not affect the ranking.', solo: 'Solo games are recorded only while you are signed in.' } };
 }
 
 /* ---------- HTTP ---------- */
@@ -116,7 +124,7 @@ function readBody(req) { return new Promise((resolve, reject) => { let size = 0;
 function authToken(tokenLike) { const a = tokenLike ? q.admiralByToken.get(String(tokenLike)) : null; if (a) q.touchAdmiral.run(now(), a.id); return a; }
 
 async function api(req, res, u) {
-  const p = u.pathname, m = req.method;
+  const p = u.pathname, m = req.method; let mm;
   if (m === 'POST' && p === '/api/admiral') {
     const b = await readBody(req); const name = String(b.name || '').trim().replace(/\s+/g, ' ').slice(0, 18); const pin = String(b.pin || '').trim();
     if (name.length < 2) return json(res, 400, { error: 'Name needs at least 2 characters' });
@@ -130,8 +138,23 @@ async function api(req, res, u) {
   }
   if (m === 'GET' && p === '/api/me') {
     const a = authToken(u.searchParams.get('token')); if (!a) return json(res, 401, { error: 'Sign in first' });
-    const games = q.myGames.all(a.id, a.id).map(g => Object.assign(publicGame(g), { role: roleOf(g, a.id) }));
-    return json(res, 200, { name: a.name, games });
+    const games = q.myGames.all(a.id, a.id).map(g => Object.assign(publicGame(g), { role: roleOf(g, a.id), kind: 'pvp' }));
+    const solo = q.soloList.all(a.id).map(r => ({ code: r.code, kind: r.mode === 'ai' ? 'ai' : 'hotseat', status: r.status, aiLevel: r.ai_level, hostNavy: r.navy, guestNavy: r.opp_navy, winner: r.winner, turns: r.turns, options: safeParse(r.options), createdAt: r.created_at, updatedAt: r.updated_at, role: 'host', host: a.name, guest: r.mode === 'ai' ? ('Admiral AI · ' + (r.ai_level || 'admiral')) : 'Player 2 (hotseat)' }));
+    const all = games.concat(solo).sort((x, y) => (y.updatedAt || y.finishedAt || y.createdAt || 0) - (x.updatedAt || x.finishedAt || x.createdAt || 0));
+    return json(res, 200, { name: a.name, games: all });
+  }
+  if (m === 'POST' && p === '/api/solo/save') {
+    const b = await readBody(req); const a = authToken(b.token); if (!a) return json(res, 401, { error: 'Sign in first' });
+    const code = String(b.code || '').toUpperCase(); if (!/^[A-Z0-9]{4,8}$/.test(code)) return json(res, 400, { error: 'Bad code' });
+    const mode = b.mode === 'hotseat' ? 'hotseat' : 'ai'; const status = b.status === 'finished' ? 'finished' : 'live';
+    const existing = q.soloGet.get(a.id, code);
+    q.soloUpsert.run(a.id, code, mode, b.aiLevel || null, status, b.navy || null, b.oppNavy || null, b.winner || null, b.turns || null, b.stats ? JSON.stringify(b.stats) : null, b.options ? JSON.stringify(b.options) : null, b.blob ? JSON.stringify(b.blob) : (existing ? existing.blob : null), existing ? existing.created_at : now(), now());
+    return json(res, 200, { ok: true, code, status });
+  }
+  if ((mm = /^\/api\/solo\/([A-Za-z0-9]{4,8})$/.exec(p)) && m === 'GET') {
+    const a = authToken(u.searchParams.get('token')); if (!a) return json(res, 401, { error: 'Sign in first' });
+    const r = q.soloGet.get(a.id, mm[1].toUpperCase()); if (!r) return json(res, 404, { error: 'No such solo game' });
+    return json(res, 200, { code: r.code, mode: r.mode, aiLevel: r.ai_level, status: r.status, winner: r.winner, turns: r.turns, stats: safeParse(r.stats), options: safeParse(r.options), blob: safeParse(r.blob) });
   }
   if (m === 'POST' && p === '/api/games') {
     const b = await readBody(req); const a = authToken(b.token); if (!a) return json(res, 401, { error: 'Sign in first' });
@@ -140,7 +163,6 @@ async function api(req, res, u) {
     const code = newCode(); q.insertGame.run(code, 'open', a.id, now(), rematchOf); if (rematchOf) q.setNext.run(code, rematchOf);
     return json(res, 201, { code, rematchOf });
   }
-  let mm;
   if ((mm = /^\/api\/games\/([A-Za-z0-9]{6})\/join$/.exec(p)) && m === 'POST') {
     const b = await readBody(req); const a = authToken(b.token); if (!a) return json(res, 401, { error: 'Sign in first' });
     const code = mm[1].toUpperCase(); const g = q.game.get(code); if (!g) return json(res, 404, { error: 'No game with that code' });
