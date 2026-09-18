@@ -62,7 +62,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   await post('/api/solo/save',{token:A.token, code:'AIQQ22', mode:'ai', aiLevel:'hunter', status:'finished', navy:'us', oppNavy:'de', winner:'ai', turns:44, blob:{game:{stage:'over',turn:44,winner:'guest'},room:'AIQQ22'}});
   me2=(await get('/api/me?token='+A.token)).body; check(me2.games.filter(g=>g.kind==='ai').length===2 && me2.games.find(g=>g.code==='AIQQ11').winner==='me','solo games finished with results');
   const lb2=(await get('/api/leaderboard')).body; const ai=lb2.vsAI.find(x=>x.name==='Alice'); check(ai&&ai.wins===1&&ai.losses===1&&ai.levels.admiral.wins===1&&ai.levels.hunter.losses===1,'versus-AI record by level', lb2.vsAI);
-  check(lb2.admirals.find(a=>a.name==='Alice').wins===0,'solo wins do not touch the PvP ranking'); check(!!(lb2.notes&&lb2.notes.ranking),'leaderboard carries an explicit note');
+  check(lb2.admirals.find(a=>a.name==='Alice').wins===1,'solo wins do not touch the PvP ranking (still the one PvP win)'); check(!!(lb2.notes&&lb2.notes.ranking),'leaderboard carries an explicit note');
   const sget=await get('/api/solo/AIQQ11?token='+A.token); check(sget.status===200&&sget.body.blob.game.turn===30,'solo blob retrievable for replay/resume'); check((await get('/api/solo/AIQQ11')).status===401,'solo blob needs a token'); check((await get('/api/solo/AIQQ11?token='+B.token)).status===404,'solo blob is private to its admiral');
   check((await get('/api/games/ZZZZZZ')).status===404,'unknown code 404');
   check((await fetch(BASE+'/')).status===200 && (await (await fetch(BASE+'/')).text()).includes('UNDERWAY'),'serves index.html');
