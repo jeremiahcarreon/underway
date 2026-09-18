@@ -2442,8 +2442,16 @@ const UI = (function(){
     return { room:S.room, role:S.role, mode:S.mode, aiLevel:S.aiLevel, name:S.name, navy:S.navy, game:gameOverride||S.game, net:S.rel?S.rel.snapshot():null, rngState:S.rng?S.rng.state():null,
       ui:{ lobby:S.lobby, pendingFire:S.pendingFire, oppHistory:S.oppHistory, place:{pid:S.place.pid,fleet:S.place.fleet,locked:S.place.locked}, viewAs:S.viewAs, chatLog:S.chatLog.slice(-60), gameOverSent:S.gameOverSent, myRematch:S.myRematch, oppRematch:S.oppRematch, screen:S.screen } };
   }
-  // Local cache always; in online games the same blob goes to the server, which is the source of truth.
-  function save(){ if(!S.room||!S.game) return; const blob=Store.serialize(sessionObj()); Store.write(S.room, blob); if(S.mode==='net'&&S.sock) S.sock.save(blob); }
+  // Local cache always; in online games the same blob goes to the server, which is the source of truth. Solo games sync to the server too when signed in.
+  function save(){ if(!S.room||!S.game) return; const blob=Store.serialize(sessionObj()); Store.write(S.room, blob); if(S.mode==='net'&&S.sock) S.sock.save(blob); else soloSync(false); }
+  let soloTimer=0;
+  function soloPayload(){ const g=S.game; const finished=g.stage==='over'; return { token:S.admiral.token, code:S.room, mode:S.mode, aiLevel:S.mode==='ai'?(g.aiLevel||S.aiLevel):null, status:finished?'finished':'live', navy:g.players.host.navy, oppNavy:g.players.guest.navy,
+    winner:finished?(S.mode==='ai'?(g.winner==='host'?'me':'ai'):g.winner):null, turns:g.turn, stats:finished?Rules.computeStats(g,'host'):null, options:Rules.optionsOf(g), blob:Store.serialize(sessionObj()) }; }
+  function soloSync(immediate){
+    if(S.mode==='net'||!S.admiral||!serverBase()||!S.game||!S.room||S.game.stage==='lobby') return;
+    clearTimeout(soloTimer); const run=()=>api('/api/solo/save','POST',soloPayload()).catch(e=>console.warn('solo sync failed:', e.message));
+    if(immediate) return run(); soloTimer=setTimeout(run,1200);
+  }
   function applySaved(data){
     S.room=data.room; S.mode=data.mode; S.aiLevel=data.aiLevel||S.aiLevel; S.name=data.name||S.name; S.navy=data.navy; S.game=data.game; const ui=data.ui||{};
     if(S.mode!=='net') S.role=data.role;
@@ -2586,13 +2594,35 @@ const UI = (function(){
     try{ const r=await api('/api/games/'+code+'/join','POST',{token:S.admiral.token}); if(r.status==='finished'){ await openFinishedGame(code); return; } startNet(r.role, code, opts); }
     catch(e){ if(/over/.test(e.message)){ try{ await openFinishedGame(code); return; }catch(e2){} } toast(e.message,'err',3600); Sfx.buzz(); }
   }
+  let myGamesFilter='all', myGamesCache=null;
   async function myGames(){
     const box=$('#mygames'); box.classList.remove('hidden'); box.innerHTML='<div class="sub">Loading…</div>';
-    try{ const r=await api('/api/me?token='+encodeURIComponent(S.admiral.token)); if(!r.games.length){ box.innerHTML='<div class="sub">No games yet. Start one and share the code.</div>'; return; }
-      box.innerHTML=''; r.games.forEach(g=>{ const opp=g.role==='host'?(g.guest||'waiting for opponent'):g.host; const row=document.createElement('div'); row.className='playerbox'; row.style.marginBottom='6px';
-        row.innerHTML='<div style="flex:1"><div class="pname"><span class="roomcode" style="font-size:15px">'+g.code+'</span> · vs '+opp+'</div><div class="pnavy">'+g.status+(g.status==='finished'?(' · '+(g.winner===g.role?'you won':'you lost')):'')+(g.hostNavy?' · '+navy(g.hostNavy).name+' vs '+(g.guestNavy?navy(g.guestNavy).name:'?'):'')+'</div></div>';
-        const b=document.createElement('button'); b.className='small primary'; b.textContent=g.status==='finished'?'Replay':'Resume'; b.addEventListener('click',()=>{ Sfx.unlock(); if(g.status==='finished') openFinishedGame(g.code); else joinGame(g.code); }); row.appendChild(b); box.appendChild(row); });
-    }catch(e){ box.innerHTML='<div class="err">'+e.message+'</div>'; }
+    try{ const r=await api('/api/me?token='+encodeURIComponent(S.admiral.token)); myGamesCache=r.games; renderMyGames(); }
+    catch(e){ box.innerHTML='<div class="err">'+e.message+'</div>'; }
+  }
+  function gameResultText(g){
+    if(g.status==='open') return 'Waiting for an opponent';
+    if(g.status!=='finished') return 'In progress'+(g.turns?' · turn '+g.turns:'');
+    if(g.kind==='pvp') return 'Completed · '+(g.winner===g.role?'You won':'You lost');
+    if(g.kind==='ai') return 'Completed · '+(g.winner==='me'?'You won':'You lost')+(g.turns?' · '+g.turns+' turns':'');
+    return 'Completed · '+(g.winner==='host'?'Player 1 won':'Player 2 won');
+  }
+  function renderMyGames(){
+    const box=$('#mygames'); const all=myGamesCache||[]; const list=all.filter(g=>myGamesFilter==='all'||(myGamesFilter==='pvp'?g.kind==='pvp':g.kind!=='pvp'));
+    box.innerHTML=''; const bar=document.createElement('div'); bar.className='row'; bar.style.marginBottom='8px';
+    [['all','All'],['pvp','PvP'],['solo','Solo']].forEach(([k,l])=>{ const b=document.createElement('button'); b.className='small'+(myGamesFilter===k?' selected':''); b.textContent=l+' ('+all.filter(g=>k==='all'||(k==='pvp'?g.kind==='pvp':g.kind!=='pvp')).length+')'; b.addEventListener('click',()=>{ myGamesFilter=k; renderMyGames(); }); bar.appendChild(b); });
+    box.appendChild(bar);
+    if(!list.length){ const d=document.createElement('div'); d.className='sub'; d.textContent=all.length?'No games in this filter.':'No games yet. Start one and share the code, or play the AI while signed in.'; box.appendChild(d); return; }
+    list.forEach(g=>{ const opp=g.kind==='pvp'?(g.role==='host'?(g.guest||'—'):g.host):g.guest; const kind=g.kind==='pvp'?'PvP':g.kind==='ai'?'vs AI':'Hotseat'; const row=document.createElement('div'); row.className='playerbox'; row.style.marginBottom='6px';
+      row.innerHTML='<div style="flex:1"><div class="pname"><span class="tag" style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--panel2);margin-right:6px">'+kind+'</span><span class="roomcode" style="font-size:15px">'+g.code+'</span> · vs '+opp+'</div><div class="pnavy">'+gameResultText(g)+(g.hostNavy?' · '+navy(g.hostNavy).name+' vs '+(g.guestNavy?navy(g.guestNavy).name:'?'):'')+(g.options&&g.options.navyTraits?' · navy abilities':'')+'</div></div>';
+      const b=document.createElement('button'); b.className='small primary'; b.textContent=g.status==='finished'?'Replay':'Resume';
+      b.addEventListener('click',async()=>{ Sfx.unlock(); try{ if(g.kind==='pvp'){ if(g.status==='finished') await openFinishedGame(g.code); else await joinGame(g.code); } else await openSolo(g.code); }catch(e){ toast(e.message,'err',3600); } });
+      row.appendChild(b); box.appendChild(row); });
+  }
+  // A solo game saved on the server: resume it (stage battle) or view its results and replay (stage over) from any device.
+  async function openSolo(code){
+    const r=await api('/api/solo/'+code+'?token='+encodeURIComponent(S.admiral.token)); if(!r.blob||!r.blob.game) throw new Error('No saved state for that game');
+    disconnect(); const b=r.blob; b.role='host'; S.aiLevel=r.aiLevel||S.aiLevel; restore(b);
   }
   async function openFinishedGame(code){
     const r=await api('/api/games/'+code); if(!r.replay) throw new Error('No replay for that code yet');
@@ -2601,10 +2631,15 @@ const UI = (function(){
     history.replaceState(null,'','?g='+code); hideBanner(); showOver(); $('#over-status').textContent='Game '+code+(r.nextCode?' · rematch: '+r.nextCode:'');
   }
   async function showLeaderboard(){
-    try{ const r=await api('/api/leaderboard'); showScreen('board'); $('#board-sub').textContent=r.games+' finished game'+(r.games===1?'':'s')+' on this server.';
+    try{ const r=await api('/api/leaderboard'); showScreen('board');
       const ta=$('#board-admirals tbody'); ta.innerHTML=''; r.admirals.forEach((a,i)=>{ const best=Object.entries(a.navies).sort((x,y)=>y[1].wins-x[1].wins)[0]; const tr=document.createElement('tr'); tr.innerHTML='<td>'+(i+1)+'</td><td><b>'+a.name+'</b></td><td>'+a.wins+'</td><td>'+a.losses+'</td><td>'+Math.round(a.winRate*100)+'%</td><td>'+Math.round(a.accuracy*100)+'%</td><td>'+(a.fastestWin?a.fastestWin+' turns':'—')+'</td><td>'+(best?navy(best[0]).name+' ('+best[1].wins+'W)':'—')+'</td>'; ta.appendChild(tr); });
       if(!r.admirals.length) ta.innerHTML='<tr><td colspan="8" class="sub">No finished games yet.</td></tr>';
       const tn=$('#board-navies tbody'); tn.innerHTML=''; r.navies.forEach(n=>{ const tr=document.createElement('tr'); tr.innerHTML='<td>'+Render.flagSVG(n.navy,30,20)+' '+navy(n.navy).name+'</td><td>'+n.games+'</td><td>'+n.wins+'</td><td>'+(n.bestAdmiral||'—')+'</td>'; tn.appendChild(tr); });
+      if(!r.navies.length) tn.innerHTML='<tr><td colspan="4" class="sub">No finished player-versus-player games yet.</td></tr>';
+      $('#board-sub').textContent=(r.notes&&r.notes.ranking?r.notes.ranking+' ':'')+r.games+' finished player-versus-player game'+(r.games===1?'':'s')+' on this server.';
+      $('#board-ai-note').textContent=r.notes&&r.notes.solo?r.notes.solo+' Wins and losses by AI level.':'';
+      const ta2=$('#board-ai tbody'); ta2.innerHTML=''; (r.vsAI||[]).forEach(a=>{ const lv=k=>a.levels[k]?a.levels[k].wins+'–'+a.levels[k].losses:'—'; const tr=document.createElement('tr'); tr.innerHTML='<td><b>'+a.name+'</b></td><td>'+a.wins+'</td><td>'+a.losses+'</td><td>'+lv('random')+'</td><td>'+lv('hunter')+'</td><td>'+lv('admiral')+'</td>'; ta2.appendChild(tr); });
+      if(!(r.vsAI||[]).length) ta2.innerHTML='<tr><td colspan="6" class="sub">No solo games recorded yet. Play the AI while signed in.</td></tr>';
     }catch(e){ toast(e.message,'err',3600); }
   }
   function bindHome(){
@@ -2663,7 +2698,7 @@ const UI = (function(){
     renderOptions();
     let status=''; const startBtn=$('#btn-lobby-start');
     if(S.mode==='net'){ if(S.role==='host'){ status=l.guestOnline?(l.guestNavy&&l.hostNavy?'Both navies chosen. Confirm to start placing fleets.':'Opponent connected. Choose navies.'):(l.guestName?'Opponent '+l.guestName+' is away — the game waits for them.':'Share the game code or link. Waiting for an opponent to join…'); startBtn.classList.remove('hidden'); startBtn.disabled=!(l.guestOnline&&l.hostNavy&&l.guestNavy); } else { status=l.hostNavy?'Host has chosen '+navy(l.hostNavy).name+'. Pick your navy; the host confirms.':'Connected. Waiting for the host to choose…'; startBtn.classList.add('hidden'); } }
-    else if(S.mode==='ai'){ status='Pick your navy. The AI ('+S.aiLevel+(S.aiLevel==='admiral'?', maneuvers':', static fleet')+') takes one of the rest.'; startBtn.classList.remove('hidden'); startBtn.disabled=!(l.hostNavy&&l.guestNavy); }
+    else if(S.mode==='ai'){ status='Pick your navy. The AI ('+S.aiLevel+(S.aiLevel==='admiral'?', maneuvers':S.aiLevel==='random'?', wanders':', static fleet')+') takes one of the rest.'; startBtn.classList.remove('hidden'); startBtn.disabled=!(l.hostNavy&&l.guestNavy); }
     else { status=(pid==='host'?(l.hostName||'Player 1'):(l.guestName||'Player 2'))+' picks a navy'+(pid==='host'?', then hand over to Player 2.':'.'); startBtn.classList.remove('hidden'); startBtn.textContent=pid==='host'&&!l.guestNavy?'Next: Player 2 picks':'Confirm & place fleets'; startBtn.disabled=pid==='host'?!l.hostNavy:!(l.hostNavy&&l.guestNavy); }
     if(S.mode!=='hotseat') startBtn.textContent='Confirm & place fleets';
     $('#lobby-status').textContent=status;
@@ -3221,7 +3256,7 @@ const UI = (function(){
   }
   async function onGameOver(){
     if(S.gameOverHandled) return; S.gameOverHandled=true; const g=S.game; hideBanner(); S.busy=false; S.pendingFire=null;
-    if(S.mode==='net') sendGameOver(); save(); refreshBattle();
+    if(S.mode==='net') sendGameOver(); save(); if(S.mode!=='net') soloSync(true); refreshBattle();
     const won=g.winner===me(); const myN=g.players[me()].navy||'us', opN=g.players[them()].navy||'uk';
     const lines=navy(myN).chatter[won?'victory':'defeat']; const line=lines[Math.floor(Math.random()*lines.length)];
     appendLog('sys', (won?'VICTORY — ':'DEFEAT — ')+(g.endReason==='surrender'?(won?'the enemy struck their colours.':'you struck your colours.'):'the fifth ship has gone down.'));
@@ -3250,7 +3285,7 @@ const UI = (function(){
     row('MVP ship', st.mvp&&st.mvp.dmgTurns>=0?shipLabel(pid,st.mvp.cls)+' ('+st.mvp.dmgTurns+' turns damaged, '+st.mvp.absorbed+' shots absorbed)':(st.mvp?shipLabel(pid,st.mvp.cls)+' (untouched)':'—'));
     row('Ships lost / sunk', st.shipsLost+' / '+st.shipsSunk); row('Enemy accuracy', Math.round(opSt.accuracy*100)+'%');
     if(st.weapons) row('Weapons used', 'MG '+st.weapons.mg+' · torpedoes '+(st.weapons.torpedoes||0)+' · mines '+st.weapons.minesLaid+' ('+st.weapons.mineHits+' struck) · radar '+st.weapons.radar+' · strikes '+st.weapons.airstrikes);
-    const canReplay=!!(g.players.host.initialFleet&&g.players.guest.initialFleet); $('#btn-replay').disabled=!canReplay; $('#over-status').textContent=canReplay?'':'Waiting for the opponent\'s move history for the replay…';
+    const canReplay=!!(g.players.host.initialFleet&&g.players.guest.initialFleet); $('#btn-replay').disabled=!canReplay; $('#over-status').textContent=canReplay?(S.mode!=='net'?(S.admiral&&serverBase()?'Recorded in My games'+(S.mode==='ai'?' and in your versus-AI record.':'.'):'Sign in on the home screen to keep games in your record.'):''):'Waiting for the opponent\'s move history for the replay…';
     $('#btn-rematch').disabled=!!S.replayOnly; $('#btn-rematch').textContent=S.mode==='net'&&S.role!=='host'?'Rematch (host starts)':'Rematch';
   }
   function bindOver(){
