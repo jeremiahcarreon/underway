@@ -401,6 +401,7 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
     <span class="spacer"></span>
     <span class="turn" id="battle-turn">Turn 1</span>
     <span class="turn" id="battle-shots" title="Shots fired">0 shots</span>
+    <button class="small icon" id="btn-replay-last" title="Replay last action" disabled>↻</button>
     <button class="small icon" id="btn-settings" title="Settings">⚙</button>
     <button class="small danger" id="btn-surrender">Surrender</button>
   </div>
@@ -410,20 +411,20 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
   </div>
   <div class="battle">
     <div class="side" id="side-own">
-      <div class="ocean"><canvas id="ownCanvas" width="560" height="560"></canvas><span class="label" id="own-label">Your ocean</span><span class="badge" id="own-badge"></span></div>
-      <div class="dock" id="ownDock"></div>
+      <div class="ocean"><canvas id="ownCanvas" width="560" height="560"></canvas><span class="label" id="own-label">Your ocean</span><span class="badge" id="own-badge"></span><div class="prompt" id="own-prompt"></div></div>
+      <button class="small" id="btn-drawer">Fleet, tally &amp; log ▾</button>
+      <div class="dock drawerable" id="ownDock"></div>
     </div>
     <div class="side inactive" id="side-enemy">
-      <div class="ocean"><canvas id="enemyCanvas" width="560" height="560"></canvas><span class="label" id="enemy-label">Enemy waters</span><span class="badge" id="enemy-badge"></span></div>
-      <div class="tally" id="tally"></div>
-      <div class="dock" id="enemyDock"></div>
+      <div class="strip"><div class="weapons" id="weapons"></div><span class="sub" id="weapon-desc"></span></div>
+      <div class="ocean"><canvas id="enemyCanvas" width="560" height="560"></canvas><span class="label" id="enemy-label">Enemy waters</span><span class="badge" id="enemy-badge"></span><div class="prompt" id="enemy-prompt"></div></div>
+      <div class="tally drawerable" id="tally"></div>
+      <div class="dock drawerable" id="enemyDock"></div>
     </div>
-    <div class="logbox"><h3>Battle log</h3><div class="log" id="log"></div></div>
+    <div class="logbox drawerable"><h3>Battle log</h3><div class="log" id="log"></div></div>
   </div>
-  <div class="actions" id="actions">
+  <div class="actions drawerable" id="actions">
     <span class="phase" id="phase-label">Maneuver phase</span>
-    <div class="weapons" id="weapons"></div>
-    <span class="sub" id="weapon-desc"></span>
     <select id="ship-select" aria-label="Ship to maneuver or fire from"></select>
     <button id="btn-advance" title="Every section moves one cell ahead. You still fire this turn.">Advance<small>1 cell · then fire</small></button>
     <button id="btn-reverse" title="Every section moves one cell astern. You still fire this turn.">Reverse<small>1 cell · then fire</small></button>
