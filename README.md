@@ -24,7 +24,7 @@ WebSockets pass through Caddy and Cloudflare without extra configuration.
 1. Open the served page, enter an Admiral name and a 4–8 digit PIN. A new name creates the Admiral; the same name later needs the same PIN.
 2. **New game** mints a game code. Share the code or the link (`?g=CODE`). The first other Admiral to join becomes the guest; anyone else is refused.
 3. Codes are single-use: after the battle the code only serves the replay. **Rematch** (host starts it) mints a fresh code and the guest joins it automatically; the loser fires first.
-4. **My games** lists your open, live and finished games with Resume / Replay. **Leaderboard** ranks Admirals overall and per navy. **Watch a replay** takes any finished code, signed in or not.
+4. **My games** lists every game you played while signed in, PvP and solo, with a PvP / Solo filter: waiting, in progress (Resume, from any device) or completed with won/lost (Replay). **Leaderboard** ranks Admirals from finished player-versus-player games and shows a separate versus-AI record by level; solo games count only while signed in. **Watch a replay** takes any finished PvP code, signed in or not.
 5. If the page is opened from `file://` the online section is hidden; `?server=http://host:port` points a file-opened copy at a server for development.
 
 ## Rule interpretations (where the brief was silent or ambiguous)
@@ -112,7 +112,7 @@ Reloads count your own turns and tick down at the start of each of your turns. W
 21. Refresh either browser mid-battle: Resume restores fleet, pegs, turn and phase and reconnects; go offline briefly: "reconnecting…" then resumes with no lost messages.
 22. Sink the fifth ship: the game ends at once, each side plays its cinematic, the stats card matches the log, and the Reveal replay scrubs through every turn including the silent moves.
 23. Host presses Rematch: a new code is minted, the guest joins it automatically, navies are re-pickable, the loser fires first; the old code serves the replay.
-24. Versus AI on Random, Hunter and Admiral each play to completion; Random and Hunter keep a static fleet (as the brief specifies), Admiral (the default) re-fires hit cells to confirm and moves its damaged ships between your shots.
+24. Versus AI on Random, Hunter and Admiral each play to completion; Random wanders (random legal moves half the time), Hunter keeps a static fleet, Admiral (the default) re-fires hit cells to confirm and moves its damaged ships between your shots.
 25. Hotseat: a curtain hides both oceans between placement and every turn.
 26. `?test=1` shows every case PASS (58 cases).
 27. On a phone in portrait: no horizontal scrolling, cells at least 32 px, tabs switch oceans, tap a cell then tap FIRE.
