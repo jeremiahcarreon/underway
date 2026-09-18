@@ -3163,11 +3163,11 @@ const UI = (function(){
   async function doManeuver(type){
     Sfx.unlock(); const g=S.game; if(S.busy) return; const pid=me(); const idx=S.selShip; const fleet=g.players[pid].fleet;
     const can=Rules.canMoveIn(g, pid, idx, type);
-    if(!can.ok){ S.busy=true; await runAnim('own', ()=>Anim.playIllegal(S.oceans.own, idx, can.reason)); S.busy=false; toast(can.reason,'err',1800); renderActions(); return; }
+    if(!can.ok){ S.busy=true; await Anim.run(()=>Anim.playIllegal(S.oceans.own, idx, can.reason)); S.busy=false; toast(can.reason,'err',1800); renderActions(); return; }
     const r=Rules.maneuver(g, pid, idx, type); if(!r.ok){ toast(r.reason,'err'); Sfx.buzz(); return; }
     const from=fleet[idx]; S.busy=true; renderActions();
     // animate on the pre-move fleet, then commit
-    await runAnim('own', ()=>Anim.playManeuver(S.oceans.own, idx, type, from, r.ship));
+    await Anim.run(()=>Anim.playManeuver(S.oceans.own, idx, type, from, r.ship));
     appendLog('me','You '+({advance:'advanced',reverse:'reversed',rotcw:'rotated ↻',rotccw:'rotated ↺'}[type])+' '+SHIP_CLASSES[from.cls].name+' to '+cellName(r.ship.bow)+' '+r.ship.heading+(r.ended&&!(r.mineHits&&r.mineHits.length)?' — turn ends':''), g.turn);
     if(r.mineHits&&r.mineHits.length){
       const temp=Rules.clone(fleet); temp[idx]=Rules.movedShip(fleet[idx],type); S.oceans.own.fleet=temp;
