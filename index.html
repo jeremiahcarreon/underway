@@ -2495,7 +2495,7 @@ const UI = (function(){
   const S={ screen:'home', room:null, role:null, mode:null, aiLevel:'admiral', name:'', navy:null, game:null, sock:null, rel:null, rng:null, admiral:null, oppOnline:false, pendingJoin:null, sessionLive:false,
             lobby:{hostNavy:null,guestNavy:null,hostName:'',guestName:'',stage:'lobby',guestOnline:false,hostReady:false,guestReady:false,picker:'host',rematch:false,nextFirst:null},
             pendingFire:null, oppHistory:null, settings:null, oceans:{own:null,enemy:null,place:null}, place:{pid:'host',fleet:null,sel:0,drag:null,locked:false},
-            target:null, targets:[], weapon:'shell', airDir:true, torpDir:0, queue:Promise.resolve(), selShip:0, viewAs:'host', tab:'own', gameOverHandled:false, myRematch:false, oppRematch:false, chatLog:[], busy:false, gameOverSent:false, linkState:'offline' };
+            target:null, targets:[], weapon:'shell', airDir:true, torpDir:0, pendingMove:null, dragHint:false, lastAction:null, queue:Promise.resolve(), selShip:0, viewAs:'host', tab:'own', gameOverHandled:false, myRematch:false, oppRematch:false, chatLog:[], busy:false, gameOverSent:false, linkState:'offline' };
   const randomId=()=>Math.random().toString(36).slice(2,10)+Date.now().toString(36);
   const me=()=>S.mode==='net'?S.role:S.viewAs; const them=()=>Rules.other(me());
   const isMobile=()=>window.innerWidth<=720;
@@ -2931,6 +2931,49 @@ const UI = (function(){
   }
   function renderTally(t){ const el=$('#tally'); el.innerHTML=''; CLASS_ORDER.forEach(cls=>{ const d=document.createElement('div'); d.innerHTML='<b class="'+(t[cls].sunk?'done':'')+'">'+t[cls].hits+'/'+t[cls].total+'</b>'+SHIP_CLASSES[cls].icon+' '+SHIP_CLASSES[cls].name.split(' ')[0]; d.title=SHIP_CLASSES[cls].name+': hits landed / sections'; el.appendChild(d); }); }
   const FIRE_LABEL={shell:'FIRE',mg:'FIRE MG',mine:'LAY MINE',radar:'SWEEP',airstrike:'STRIKE',torpedo:'TORPEDO'}; const P0={x:0,y:0};
+  /* ---------- guided turn flow: prompts over the active ocean, drag-to-move, fire confirmation, replay last action ---------- */
+  function showPrompt(which, text, buttons){ const el=$('#'+which+'-prompt'); if(!el) return; el.innerHTML=''; const t=document.createElement('div'); t.className='ptext'; t.textContent=text; el.appendChild(t); const row=document.createElement('div'); row.className='row'; (buttons||[]).forEach(b=>{ const btn=document.createElement('button'); btn.className='small'+(b.primary?' primary':''); btn.textContent=b.label; btn.addEventListener('click',()=>{ Sfx.unlock(); b.onClick(); }); row.appendChild(btn); }); if(buttons&&buttons.length) el.appendChild(row); el.classList.add('show'); }
+  function hidePrompt(which){ const el=$('#'+which+'-prompt'); if(el) el.classList.remove('show'); }
+  function targetsComplete(){ if(S.weapon==='mg') return S.targets.length===Rules.weaponSpec(S.game,me(),'mg').bullets; return !!S.target; }
+  function flowState(){ const g=S.game; if(!g||g.stage!=='battle'||g.winner) return 'over'; if(g.current!==me()) return 'wait'; if(S.busy||S.pendingFire) return 'resolving'; if(S.pendingMove) return 'confirmMove'; if(g.phase==='maneuver'&&!S.dragHint) return g.bonusMove?'bonus':'ask'; if(g.phase==='maneuver') return 'drag'; return targetsComplete()?'confirmFire':'aim'; }
+  function fireQuestion(){
+    const w=S.weapon, g=S.game, fs=fireShip(); const nm=fs?shipLabel(me(),fs.cls):'';
+    if(w==='shell') return 'Fire a shell at '+cellName(S.target)+'?';
+    if(w==='mine') return 'Lay a mine at '+cellName(S.target)+'? (ends your turn)';
+    if(w==='mg') return 'Machine gun from '+nm+' at '+S.targets.map(cellName).join(', ')+'?';
+    if(w==='radar') return 'Radar sweep '+areaName(Rules.radarAreaFor(g,me(),fs.cls,S.target))+' with '+nm+'? (uses your shot)';
+    if(w==='torpedo') return 'Torpedo along '+Rules.laneName(laneFor(S.target))+'?';
+    if(w==='airstrike'){ const line=Rules.lineCells(S.target,S.airDir); return 'Air strike on '+cellName(line[0])+'–'+cellName(line[2])+' ('+(S.airDir?'horizontal':'vertical')+')?'; }
+    return 'Fire?';
+  }
+  function fireButtons(){
+    const w=S.weapon; const btns=[{label:{shell:'Fire',mine:'Lay mine',mg:'Fire',radar:'Sweep',torpedo:'Fire',airstrike:'Strike'}[w]||'Fire', primary:true, onClick:()=>doFire()}];
+    if(w==='torpedo') btns.push({label:'Change direction', onClick:()=>{ S.torpDir=(S.torpDir+1)%4; syncTargets(); renderActions(); }});
+    if(w==='airstrike') btns.push({label:'Flip line', onClick:()=>{ S.airDir=!S.airDir; syncTargets(); renderActions(); }});
+    btns.push({label:'Cancel', onClick:()=>{ clearTargets(); renderActions(); }});
+    return btns;
+  }
+  function renderFlow(){
+    if(S.screen!=='battle'||!S.game||!S.oceans.own) return; const st=flowState(); const my=S.game.players[me()];
+    hidePrompt('own'); hidePrompt('enemy'); $('#btn-replay-last').disabled=!S.lastAction||S.busy;
+    const replayBtn=S.lastAction?[{label:'↻ Replay last action', onClick:()=>replayLast()}]:[];
+    switch(st){
+      case 'ask': showPrompt('own','Maneuver a vessel?',[{label:'Yes — drag a ship',primary:true,onClick:()=>{ S.dragHint=true; renderFlow(); }},{label:'No, go fire',onClick:()=>declineManeuver()}]); break;
+      case 'bonus': showPrompt('own','Fleet exercise: move a second undamaged ship?',[{label:'Yes — drag a ship',primary:true,onClick:()=>{ S.dragHint=true; renderFlow(); }},{label:'No, go fire',onClick:()=>declineManeuver()}]); break;
+      case 'drag': showPrompt('own','Drag a ship along its length to advance or reverse, or swing its bow sideways to rotate about the stern. Illegal directions will not snap.',[{label:'Skip maneuver, go fire',onClick:()=>declineManeuver()}]); break;
+      case 'confirmMove': { const pm=S.pendingMove; const ship=my.fleet[pm.idx]; const rot=pm.type.startsWith('rot'); const verb={advance:'Advance',reverse:'Reverse',rotcw:'Rotate ↻',rotccw:'Rotate ↺'}[pm.type];
+        showPrompt('own', verb+' '+shipLabel(me(),ship.cls)+(rot?' about its stern at '+cellName(Rules.sternCell(ship))+'? This ends your turn — no shot.':' to bow '+cellName(pm.ship.bow)+'?'), [{label:'Confirm',primary:true,onClick:()=>confirmMove()},{label:'Go back',onClick:()=>cancelMove()}]); break; }
+      case 'aim': showPrompt('enemy', $('#target-label').textContent, replayBtn); break;
+      case 'confirmFire': showPrompt('enemy', fireQuestion(), fireButtons()); break;
+      case 'wait': showPrompt('own','Enemy turn — stand by. Their action plays here.', replayBtn); break;
+      default: break;
+    }
+  }
+  function declineManeuver(){ const g=S.game; if(g.phase==='maneuver'){ const r=Rules.skipManeuver(g,me()); if(r.ok){ S.game=r.game; save(); } } S.dragHint=false; Sfx.click(); refreshBattle(); setTab('enemy'); }
+  function confirmMove(){ const pm=S.pendingMove; if(!pm) return; S.pendingMove=null; const own=S.oceans.own; own.ghost=null; own.pivot=null; S.selShip=pm.idx; doManeuver(pm.type); }
+  function cancelMove(){ S.pendingMove=null; const own=S.oceans.own; own.ghost=null; own.pivot=null; Sfx.click(); renderActions(); }
+  function runAnim(ocean, fn){ S.lastAction={ocean, fn}; return Anim.run(fn); }
+  async function replayLast(){ const la=S.lastAction; if(!la||S.busy) return; setTab(la.ocean); S.busy=true; renderActions(); await Anim.run(la.fn); S.busy=false; refreshBattle(); }
   const LANE_MODES=[{axis:'row',dir:1,label:'→ row'},{axis:'row',dir:-1,label:'← row'},{axis:'col',dir:1,label:'↓ column'},{axis:'col',dir:-1,label:'↑ column'}];
   function laneFor(cell){ const m=LANE_MODES[S.torpDir%4]; return {axis:m.axis, index:m.axis==='row'?cell.y:cell.x, dir:m.dir}; }
   function subStatus(){ const g=S.game; const sub=(g.players[me()].fleet||[])[Rules.SUB_IDX]; if(!sub||sub.sunk) return 'sub lost'; if(Rules.hitCount(sub)>0&&!Rules.weaponSpec(g,me(),'torpedo').damagedOk) return 'sub damaged'; if(g.current===me()&&((g.movedShips||[]).includes(Rules.SUB_IDX)||(g.maneuvered&&g.maneuveredShip===Rules.SUB_IDX))) return 'sub moved'; return null; }
@@ -3030,6 +3073,7 @@ const UI = (function(){
     $('#btn-fire').textContent=FIRE_LABEL[w]; $('#btn-fire').disabled=!(fire&&ready&&Rules.weaponReady(g,me(),w).ok); $('#target-label').textContent=label;
     $('#phase-label').textContent=g.winner?'Battle over':!myTurn?'Enemy turn — '+(S.pendingFire?'waiting for the enemy report…':'waiting'):g.bonusMove?'Fleet exercise: move a second undamaged ship (advance or reverse), or fire now.':g.phase==='maneuver'?'Your turn · Maneuver (optional): Advance/Reverse then fire, or Rotate (pivots on the stern, ends the turn). Hover a button to preview.':'Your turn · Fire phase — choose a weapon and a target on the enemy grid';
     $('#btn-surrender').disabled=!!g.winner;
+    renderFlow();
   }
   function shortRes(s){ const cn=s.cls?SHIP_CLASSES[s.cls].name:''; return {miss:'miss',hit:'HIT '+cn+(s.crippled?' (crippled)':''),confirmed:(s.moved?'burning '+cn+' — MOVED here':'confirmed '+cn+' still here'),sunk:'SUNK '+cn,graze:'grazed '+cn}[s.result]||s.result; }
   function renderLog(){
@@ -3063,7 +3107,20 @@ const UI = (function(){
     en.canvas.addEventListener('pointercancel',()=>{ clearTimeout(pressTimer); pressTimer=0; });
     own.canvas.addEventListener('pointermove',e=>{ own.hover=own.cellAt(e.clientX,e.clientY); });
     own.canvas.addEventListener('pointerleave',()=>{ own.hover=null; });
-    own.canvas.addEventListener('pointerdown',e=>{ Sfx.unlock(); if(Anim.busy()){ Anim.skip(); return; } const cell=own.cellAt(e.clientX,e.clientY); if(!cell) return; const g=S.game; if(g.current!==me()||g.phase!=='maneuver') return; const f=g.players[me()].fleet; for(let i=0;i<f.length;i++){ if(Rules.sectionAt(f[i],cell)>=0){ S.selShip=i; Sfx.click(); refreshBattle(); return; } } });
+    // Drag-to-move: along the ship's length = advance/reverse, sideways = rotate about the stern. Snaps only to legal results; release asks for confirmation.
+    let drag=null;
+    own.canvas.addEventListener('pointerdown',e=>{ Sfx.unlock(); if(Anim.busy()){ Anim.skip(); return; } const cell=own.cellAt(e.clientX,e.clientY); if(!cell) return; const g=S.game; if(g.current!==me()||g.phase!=='maneuver'||S.busy||S.pendingMove||g.winner) return;
+      const f=g.players[me()].fleet; const idx=f.findIndex(sh=>sh.bow&&Rules.sectionAt(sh,cell)>=0); if(idx<0) return; S.selShip=idx; try{ own.canvas.setPointerCapture(e.pointerId); }catch(err){}
+      const cands={}; MOVE_TYPES.forEach(t=>{ cands[t]=Rules.canMoveIn(g,me(),idx,t); }); drag={idx, x0:e.clientX, y0:e.clientY, cands, type:null, moved:false}; renderActions(); });
+    own.canvas.addEventListener('pointermove',e=>{ own.hover=own.cellAt(e.clientX,e.clientY); if(!drag) return; const r=own.canvas.getBoundingClientRect(); const k=own.w/r.width; const dx=(e.clientX-drag.x0)*k, dy=(e.clientY-drag.y0)*k; const c=own.cell;
+      if(Math.hypot(dx,dy)<c*0.35){ drag.type=null; own.ghost=null; own.pivot=null; return; } drag.moved=true; const ship=S.game.players[me()].fleet[drag.idx]; const h=DIR[ship.heading]; const along=dx*h.x+dy*h.y; const right=dx*(-h.y)+dy*h.x;
+      const type=Math.abs(along)>=Math.abs(right)?(along>0?'advance':'reverse'):(right>0?'rotcw':'rotccw'); drag.type=type; const cand=drag.cands[type]; own.ghost=cand.ok?cand.ship:Rules.movedShip(ship,type); own.ghostOk=cand.ok; own.pivot=type.startsWith('rot')?Rules.sternCell(ship):null; drag.reason=cand.ok?null:cand.reason;
+      $('#phase-label').textContent=cand.ok?(MOVE_LABEL[type]+' — release to confirm'):(MOVE_LABEL[type]+' — illegal: '+cand.reason); });
+    const endDrag=e=>{ if(!drag) return; const d=drag; drag=null; own.hover=null;
+      if(!d.moved){ own.ghost=null; own.pivot=null; Sfx.click(); refreshBattle(); return; }
+      if(d.type&&d.cands[d.type].ok){ const ship=S.game.players[me()].fleet[d.idx]; S.pendingMove={idx:d.idx, type:d.type, ship:d.cands[d.type].ship}; own.ghost=d.cands[d.type].ship; own.ghostOk=true; own.pivot=d.type.startsWith('rot')?Rules.sternCell(ship):null; Sfx.confirm(); renderActions(); }
+      else { if(d.type){ Sfx.buzz(); toast(d.reason||'Illegal move','err',1600); } own.ghost=null; own.pivot=null; renderActions(); } };
+    own.canvas.addEventListener('pointerup',endDrag); own.canvas.addEventListener('pointercancel',()=>{ drag=null; own.ghost=null; own.pivot=null; });
     // tap anywhere on the enemy canvas during an animation skips it
     en.canvas.addEventListener('pointerdown',()=>{ if(Anim.busy()) Anim.skip(); });
   }
@@ -3077,9 +3134,11 @@ const UI = (function(){
   }
   function bindBattle(){
     $('#tab-own').addEventListener('click',()=>setTab('own')); $('#tab-enemy').addEventListener('click',()=>setTab('enemy'));
+    $('#btn-drawer').addEventListener('click',()=>{ const sc=$('#screen-battle'); sc.classList.toggle('drawer-open'); $('#btn-drawer').textContent=sc.classList.contains('drawer-open')?'Fleet, tally & log ▴':'Fleet, tally & log ▾'; Object.values(S.oceans).forEach(o=>o&&o.resize()); });
+    $('#btn-replay-last').addEventListener('click',()=>{ Sfx.unlock(); replayLast(); });
     $('#ship-select').addEventListener('change',e=>{ S.selShip=parseInt(e.target.value,10)||0; refreshBattle(); });
     ['advance','reverse','rotcw','rotccw'].forEach(t=>{ const b=$('#btn-'+t); b.addEventListener('click',()=>{ clearPreview(); doManeuver(t); }); b.addEventListener('mouseenter',()=>previewMove(t)); b.addEventListener('focus',()=>previewMove(t)); b.addEventListener('mouseleave',clearPreview); b.addEventListener('blur',clearPreview); });
-    $('#btn-skip').addEventListener('click',()=>{ Sfx.unlock(); const r=Rules.skipManeuver(S.game,me()); if(!r.ok){ toast(r.reason,'err'); return; } S.game=r.game; Sfx.click(); save(); refreshBattle(); if(isMobile()) setTab('enemy'); });
+    $('#btn-skip').addEventListener('click',()=>{ Sfx.unlock(); const r=Rules.skipManeuver(S.game,me()); if(!r.ok){ toast(r.reason,'err'); return; } S.game=r.game; Sfx.click(); save(); refreshBattle(); setTab('enemy'); });
     $('#btn-fire').addEventListener('click',()=>doFire());
     $('#wm-cancel').addEventListener('click',()=>overlay('ov-weapon',false)); $('#wm-arm').addEventListener('click',armWeapon);
     $('#btn-airdir').addEventListener('click',()=>{ S.airDir=!S.airDir; Sfx.click(); syncTargets(); renderActions(); });
@@ -3104,24 +3163,24 @@ const UI = (function(){
   async function doManeuver(type){
     Sfx.unlock(); const g=S.game; if(S.busy) return; const pid=me(); const idx=S.selShip; const fleet=g.players[pid].fleet;
     const can=Rules.canMoveIn(g, pid, idx, type);
-    if(!can.ok){ S.busy=true; await Anim.run(()=>Anim.playIllegal(S.oceans.own, idx, can.reason)); S.busy=false; toast(can.reason,'err',1800); renderActions(); return; }
+    if(!can.ok){ S.busy=true; await runAnim('own', ()=>Anim.playIllegal(S.oceans.own, idx, can.reason)); S.busy=false; toast(can.reason,'err',1800); renderActions(); return; }
     const r=Rules.maneuver(g, pid, idx, type); if(!r.ok){ toast(r.reason,'err'); Sfx.buzz(); return; }
     const from=fleet[idx]; S.busy=true; renderActions();
     // animate on the pre-move fleet, then commit
-    await Anim.run(()=>Anim.playManeuver(S.oceans.own, idx, type, from, r.ship));
+    await runAnim('own', ()=>Anim.playManeuver(S.oceans.own, idx, type, from, r.ship));
     appendLog('me','You '+({advance:'advanced',reverse:'reversed',rotcw:'rotated ↻',rotccw:'rotated ↺'}[type])+' '+SHIP_CLASSES[from.cls].name+' to '+cellName(r.ship.bow)+' '+r.ship.heading+(r.ended&&!(r.mineHits&&r.mineHits.length)?' — turn ends':''), g.turn);
     if(r.mineHits&&r.mineHits.length){
       const temp=Rules.clone(fleet); temp[idx]=Rules.movedShip(fleet[idx],type); S.oceans.own.fleet=temp;
       for(const mh of r.mineHits){
         if(S.mode==='net') send('MINE_HIT',{mineId:mh.mineId, cell:mh.cell, result:mh.result, cls:mh.cls, crippled:mh.crippled, crippledBy:mh.crippledBy, footprint:mh.footprint, turn:mh.turn});
-        await Anim.run(()=>Anim.playMineHit(S.oceans.own, mh.cell, mh, {owner:true, ship:temp[idx], shipIdx:idx, navyId:g.players[pid].navy, shakeEl:$('#side-own')}));
+        await runAnim('own', ()=>Anim.playMineHit(S.oceans.own, mh.cell, mh, {owner:true, ship:temp[idx], shipIdx:idx, navyId:g.players[pid].navy, shakeEl:$('#side-own')}));
         appendLog('them','You struck a mine at '+cellName(mh.cell)+': '+Rules.resultText(mh)+' on your '+SHIP_CLASSES[mh.cls].name+(r.ended&&!r.game.winner?' — turn ends':''), g.turn); toast('MINE! '+Rules.resultText(mh),'hit',3200); Sfx.speak('Mine! '+Rules.resultText(mh), g.players[pid].navy);
       }
     }
     S.game=r.game; S.busy=false; save();
     if(r.ended){ if(S.mode==='net') send('END_TURN',{}); afterAction(); }
-    else if(r.bonusMove){ refreshBattle(); toast('Fleet exercise: you may move a second undamaged ship, or fire.','',2600); }
-    else { refreshBattle(); if(isMobile()) setTab('enemy'); toast(r.game.players[pid].moves.slice(-1)[0].dash?'MAS boat dash: two cells. Choose a target and fire.':'Maneuver complete. Choose a target and fire.','',1800); }
+    else if(r.bonusMove){ S.dragHint=false; refreshBattle(); toast('Fleet exercise: you may move a second undamaged ship, or fire.','',2600); }
+    else { refreshBattle(); setTab('enemy'); toast(r.game.players[pid].moves.slice(-1)[0].dash?'MAS boat dash: two cells. Choose a target and fire.':'Maneuver complete. Choose a target and fire.','',1800); }
   }
   function shipGeom(sh){ return {cls:sh.cls, bow:{x:sh.bow.x,y:sh.bow.y}, heading:sh.heading}; }
   function stripRes(r){ return {result:r.result, cls:r.cls||null, crippled:!!r.crippled, crippledBy:r.crippledBy||null, footprint:r.footprint||null}; }
@@ -3142,7 +3201,7 @@ const UI = (function(){
     if(S.mode==='net'){ S.pendingFire={weapon:'shell', cell:{x:cell.x,y:cell.y}}; send('FIRE',{weapon:'shell', cell:S.pendingFire.cell, turn:g.turn}); clearTargets(); renderActions(); toast('Shot away — waiting for the enemy report…','',1500); return; }
     const r=Rules.fire(g, pid, cell); if(!r.ok){ toast(r.reason,'err'); Sfx.buzz(); return; }
     clearTargets(); S.busy=true; renderActions();
-    await Anim.run(()=>Anim.playShot(S.oceans.enemy,{cell, shot:r.shot, owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')}));
+    await runAnim('enemy', ()=>Anim.playShot(S.oceans.enemy,{cell, shot:r.shot, owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')}));
     S.game=r.game; S.busy=false; announceShot(r.shot, true); if(r.freeShot) toast('Escort screen: that confirm cost no shot — fire again!','sunk',3200); save(); afterAction();
   }
   async function doMG(shipIdx, cells){
@@ -3152,15 +3211,15 @@ const UI = (function(){
     if(S.mode==='net'){ S.pendingFire={weapon:'mg', cells, shipIdx}; send('FIRE',{weapon:'mg', cells, ship:shipGeom(ship), turn:g.turn}); clearTargets(); renderActions(); toast('Machine gun firing — waiting for the report…','',1500); return; }
     const r=Rules.fireMG(g, pid, {shipIdx, cells}); if(!r.ok){ toast(r.reason,'err'); Sfx.buzz(); return; }
     clearTargets(); S.busy=true; renderActions();
-    await Anim.run(()=>Anim.playMG(S.oceans.enemy, cells, r.results, {srcOcean:S.oceans.own, srcCells:Rules.shipCells(ship), fromLeft:true, owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')}));
+    await runAnim('enemy', ()=>Anim.playMG(S.oceans.enemy, cells, r.results, {srcOcean:S.oceans.own, srcCells:Rules.shipCells(ship), fromLeft:true, owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')}));
     S.game=r.game; S.busy=false; announceGroup(r.shots, true, 'mg'); save(); afterAction();
   }
   async function doMine(cell){
     const g=S.game; const pid=me(); const r=Rules.layMine(g, pid, cell); if(!r.ok){ toast(r.reason,'err'); Sfx.buzz(); return; }
     clearTargets(); S.busy=true; renderActions();
     if(S.mode==='net') send('MINE',{cell:{x:cell.x,y:cell.y}, mineId:r.mine.id, turn:g.turn});
-    await Anim.run(()=>Anim.playMineLay(S.oceans.enemy, cell));
-    if(r.immediate){ await Anim.run(()=>Anim.playMineHit(S.oceans.enemy, cell, r.immediate, {owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')})); }
+    await runAnim('enemy', ()=>Anim.playMineLay(S.oceans.enemy, cell));
+    if(r.immediate){ await runAnim('enemy', ()=>Anim.playMineHit(S.oceans.enemy, cell, r.immediate, {owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')})); }
     S.game=r.game; S.busy=false; appendLog('me','You laid a mine at '+cellName(cell)+' ('+Rules.weapon(S.game.players[pid],'mine').usesRemaining+' left). Turn ends.', g.turn);
     if(r.immediate){ const sh=r.immediate; appendLog('me','It detonated on contact: '+Rules.resultText(sh), sh.turn); toast('Mine laid right on a ship — '+Rules.resultText(sh)+'!','sunk',3200); const cn=sh.cls?SHIP_CLASSES[sh.cls].name:''; if(sh.result===RESULT.SUNK) chat(g.players[pid].navy,'sunkEnemy',{cls:cn, ship:shipLabel(them(),sh.cls)}); else if(sh.result===RESULT.HIT) chat(g.players[pid].navy, sh.crippled?'hitCrippled':'hit', {cls:cn, ship:shipLabel(them(),sh.cls)}); }
     else toast('Mine laid at '+cellName(cell)+'. It detonates when an enemy section moves onto it.','',2600);
@@ -3172,7 +3231,7 @@ const UI = (function(){
     if(S.mode==='net'){ S.pendingFire={weapon:'radar', shipIdx, anchor:{x:anchor.x,y:anchor.y}}; send('RADAR',{ship:shipGeom(ship), anchor:S.pendingFire.anchor, turn:g.turn}); clearTargets(); renderActions(); toast('Radar sweeping — waiting for returns…','',1500); return; }
     const r=Rules.radar(g, pid, {shipIdx, anchor}); if(!r.ok){ toast(r.reason,'err'); Sfx.buzz(); return; }
     clearTargets(); S.busy=true; renderActions();
-    await Anim.run(()=>Anim.playRadar(S.oceans.enemy, r.area, r.contacts, {srcOcean:S.oceans.own, srcCells:Rules.shipCells(ship)}));
+    await runAnim('enemy', ()=>Anim.playRadar(S.oceans.enemy, r.area, r.contacts, {srcOcean:S.oceans.own, srcCells:Rules.shipCells(ship)}));
     S.game=r.game; S.busy=false; announceRadar(r, ship); save(); afterAction();
   }
   async function doAirstrike(cells){
@@ -3181,7 +3240,7 @@ const UI = (function(){
     if(S.mode==='net'){ S.pendingFire={weapon:'airstrike', cells}; send('FIRE',{weapon:'airstrike', cells, ship:shipGeom(carrier), turn:g.turn}); clearTargets(); renderActions(); toast('Strike wing launched — waiting for the report…','',1500); return; }
     const r=Rules.airstrike(g, pid, {cells}); if(!r.ok){ toast(r.reason,'err'); Sfx.buzz(); return; }
     clearTargets(); S.busy=true; renderActions();
-    await Anim.run(()=>Anim.playAirstrike(S.oceans.enemy, cells, r.results, {srcOcean:S.oceans.own, srcCells:Rules.shipCells(carrier), owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')}));
+    await runAnim('enemy', ()=>Anim.playAirstrike(S.oceans.enemy, cells, r.results, {srcOcean:S.oceans.own, srcCells:Rules.shipCells(carrier), owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')}));
     S.game=r.game; S.busy=false; announceGroup(r.shots, true, 'airstrike'); save(); afterAction();
   }
   async function doTorpedo(lane){
@@ -3189,7 +3248,7 @@ const UI = (function(){
     if(S.mode==='net'){ S.pendingFire={weapon:'torpedo', lane}; send('FIRE',{weapon:'torpedo', lane, turn:g.turn}); clearTargets(); renderActions(); toast('Torpedo in the water — waiting for the report…','',1500); return; }
     const r=Rules.torpedo(g, pid, {lane}); if(!r.ok){ toast(r.reason,'err'); Sfx.buzz(); return; }
     clearTargets(); S.busy=true; renderActions();
-    await Anim.run(()=>Anim.playTorpedo(S.oceans.enemy, r.path, r.shot.stopIndex, r.shot, {owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')}));
+    await runAnim('enemy', ()=>Anim.playTorpedo(S.oceans.enemy, r.path, r.shot.stopIndex, r.shot, {owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')}));
     S.game=r.game; S.busy=false; announceTorpedo(r.shot, true); save(); afterAction();
   }
   function announceTorpedo(shot, mine){
@@ -3222,16 +3281,16 @@ const UI = (function(){
     const g=S.game; const r=Rules.layMine(g, them(), p.cell, p.mineId); if(!r.ok){ console.warn('MINE refused', r.reason); return; }
     if(r.immediate){ // it landed on one of our sections: report it and show the blast on our ocean
       const mh=r.immediate; send('MINE_HIT',{mineId:mh.mineId, cell:mh.cell, result:mh.result, cls:mh.cls, crippled:mh.crippled, crippledBy:mh.crippledBy, footprint:mh.footprint, turn:mh.turn});
-      const struck=mh.shipIdx>=0?g.players[me()].fleet[mh.shipIdx]:null; S.busy=true; hideBanner(); renderActions(); if(isMobile()) setTab('own');
-      await Anim.run(()=>Anim.playMineHit(S.oceans.own, mh.cell, mh, {owner:true, ship:struck, shipIdx:mh.shipIdx, navyId:g.players[me()].navy, shakeEl:$('#side-own')}));
+      const struck=mh.shipIdx>=0?g.players[me()].fleet[mh.shipIdx]:null; S.busy=true; hideBanner(); renderActions(); setTab('own');
+      await runAnim('own', ()=>Anim.playMineHit(S.oceans.own, mh.cell, mh, {owner:true, ship:struck, shipIdx:mh.shipIdx, navyId:g.players[me()].navy, shakeEl:$('#side-own')}));
       S.game=r.game; S.busy=false; appendLog('them','Enemy mine laid right on your '+SHIP_CLASSES[mh.cls].name+' at '+cellName(mh.cell)+': '+Rules.resultText(mh), mh.turn); toast('MINE! '+Rules.resultText(mh)+' on your '+SHIP_CLASSES[mh.cls].name,'hit',3400); save(); afterAction(); return;
     }
     S.game=r.game; Sfx.splash(); appendLog('them','Enemy laid a mine somewhere in your waters.', g.turn); toast('Enemy laid a mine somewhere in your waters! Moving is now a gamble.','err',3400); save(); afterAction();
   }
   async function onRemoteMineHit(p){
     const g=S.game; const r=Rules.applyRemoteMineHit(g, me(), p); if(!r.ok){ console.warn('MINE_HIT refused', r.reason); return; }
-    S.busy=true; renderActions(); if(isMobile()) setTab('enemy'); hideBanner();
-    await Anim.run(()=>Anim.playMineHit(S.oceans.enemy, p.cell, r.shot, {owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')}));
+    S.busy=true; renderActions(); setTab('enemy'); hideBanner();
+    await runAnim('enemy', ()=>Anim.playMineHit(S.oceans.enemy, p.cell, r.shot, {owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')}));
     S.game=r.game; S.busy=false; appendLog('me','Your mine struck at '+cellName(p.cell)+': '+Rules.resultText(r.shot), r.shot.turn); toast('Your mine struck! '+Rules.resultText(r.shot),'sunk',3200);
     const cn=r.shot.cls?SHIP_CLASSES[r.shot.cls].name:''; if(r.shot.result===RESULT.SUNK) chat(g.players[me()].navy,'sunkEnemy',{cls:cn, ship:shipLabel(them(),r.shot.cls)}); else if(r.shot.crippled) chat(g.players[me()].navy,'hitCrippled',{cls:cn, ship:shipLabel(them(),r.shot.cls)});
     save(); afterAction();
@@ -3245,8 +3304,8 @@ const UI = (function(){
   async function onRemoteRadarResult(p){
     const g=S.game; const pf=S.pendingFire; if(!pf||pf.weapon!=='radar'){ console.warn('unexpected RADAR_RESULT'); return; }
     const ship=(g.players[me()].fleet||[])[pf.shipIdx]; const r=Rules.radar(g, me(), {shipIdx:pf.shipIdx, anchor:pf.anchor, override:{contacts:p.contacts||[]}}); if(!r.ok){ console.warn('RADAR_RESULT refused', r.reason); S.pendingFire=null; return; }
-    S.busy=true; renderActions(); if(isMobile()) setTab('enemy');
-    await Anim.run(()=>Anim.playRadar(S.oceans.enemy, r.area, r.contacts, {srcOcean:S.oceans.own, srcCells:Rules.shipCells(ship)}));
+    S.busy=true; renderActions(); setTab('enemy');
+    await runAnim('enemy', ()=>Anim.playRadar(S.oceans.enemy, r.area, r.contacts, {srcOcean:S.oceans.own, srcCells:Rules.shipCells(ship)}));
     S.game=r.game; S.pendingFire=null; S.busy=false; announceRadar(r, ship); save(); afterAction();
   }
   function announceShot(shot, mine){
@@ -3265,22 +3324,22 @@ const UI = (function(){
     if(S.mode==='hotseat'){ if(g.current!==S.viewAs){ hideBanner(); await curtain('Pass the device to '+g.players[g.current].name, 'Turn '+g.turn+'. Both oceans are hidden until the next admiral is ready.'); S.viewAs=g.current; S.target=null; S.targets=[]; S.weapon='shell'; S.selShip=firstMobileShip(); S.oceans.own.clearEffects(); S.oceans.enemy.clearEffects(); S.oceans.enemy.radarView=null; S.oceans.own.radarView=null; S.oceans.enemy.hoverArea=null; S.oceans.enemy.hoverLine=null; renderLog(); refreshBattle(); setTab('own'); } myTurnBanner(); return; }
     if(g.current===me()){ if(S.pendingFire){ S.pendingFire=null; } myTurnBanner(); } else banner('Enemy turn — stand by', true);
   }
-  function myTurnBanner(){ banner('Your turn, Admiral', false, 1800); Sfx.chime(); chat(S.game.players[me()].navy||'us','turnStart'); if(isMobile()) setTab('own'); }
+  function myTurnBanner(){ S.dragHint=false; S.pendingMove=null; if(S.oceans.own){ S.oceans.own.ghost=null; S.oceans.own.pivot=null; } banner('Your turn, Admiral', false, 1800); Sfx.chime(); chat(S.game.players[me()].navy||'us','turnStart'); if(S.game.phase==='maneuver') setTab('own'); else setTab('enemy'); renderActions(); }
   async function aiTurn(){
     const g=S.game; if(g.winner||g.current!=='guest') return;
     const t=AI.takeTurn(g,'guest',S.rng); S.busy=true;
     const mineHits=t.game.log.slice(g.log.length).filter(e=>e.kind==='shot'&&e.weapon==='mine'&&e.player==='host');
-    if(mineHits.length){ hideBanner(); if(isMobile()) setTab('enemy'); for(const mh of mineHits){ await Anim.run(()=>Anim.playMineHit(S.oceans.enemy, mh.cell, mh, {owner:false, navyId:g.players.guest.navy, shakeEl:$('#side-enemy')})); appendLog('me','Your mine struck at '+cellName(mh.cell)+': '+Rules.resultText(mh), mh.turn); toast('Your mine struck! '+Rules.resultText(mh),'sunk',3200); } S.oceans.enemy.pegs=Rules.pegMap(t.game.players.host.shots); }
+    if(mineHits.length){ hideBanner(); setTab('enemy'); for(const mh of mineHits){ await runAnim('enemy', ()=>Anim.playMineHit(S.oceans.enemy, mh.cell, mh, {owner:false, navyId:g.players.guest.navy, shakeEl:$('#side-enemy')})); appendLog('me','Your mine struck at '+cellName(mh.cell)+': '+Rules.resultText(mh), mh.turn); toast('Your mine struck! '+Rules.resultText(mh),'sunk',3200); } S.oceans.enemy.pegs=Rules.pegMap(t.game.players.host.shots); }
     if(t.rotated){ S.game=t.game; if(!t.game.winner) appendLog('them','Enemy fleet maneuvered — no shot this turn.', g.turn); S.busy=false; hideBanner(); afterAction(); return; }
     const a=t.action; if(!a){ S.game=t.game; S.busy=false; hideBanner(); afterAction(); return; }
-    hideBanner(); const myFleet=g.players.host.fleet, myNavy=g.players.host.navy, own=S.oceans.own, en=S.oceans.enemy; if(isMobile()) setTab('own');
+    hideBanner(); const myFleet=g.players.host.fleet, myNavy=g.players.host.navy, own=S.oceans.own, en=S.oceans.enemy; setTab('own');
     S.oceans.enemy.sightings=t.game.players.host.sightings; // reveals from the AI's weapon use show on the tracking grid right away
     switch(a.weapon){
-      case 'shell': { const shot=a.shot; const struck=shot.shipIdx>=0?myFleet[shot.shipIdx]:null; await Anim.run(()=>Anim.playShot(own,{cell:shot.cell, shot, owner:true, ship:struck, shipIdx:shot.shipIdx, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; announceShot(shot,false); if(t.game.current==='guest'&&!t.game.winner) toast('Enemy escort screen: that confirm cost them no shot — they fire again.','err',3200); break; }
-      case 'mg': { const src=a.sighting&&a.sighting.cells?a.sighting.cells:null; await Anim.run(()=>Anim.playMG(own, a.cells, a.results, {srcOcean:en, srcCells:src, fromLeft:false, owner:true, fleet:myFleet, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; announceGroup(a.shots,false,'mg'); break; }
-      case 'airstrike': { const src=a.sighting&&a.sighting.cells?a.sighting.cells:null; await Anim.run(()=>Anim.playAirstrike(own, a.cells, a.results, {srcOcean:en, srcCells:src, owner:true, fleet:myFleet, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; announceGroup(a.shots,false,'airstrike'); break; }
-      case 'torpedo': { const sh=a.shot; const struck=sh.shipIdx>=0?myFleet[sh.shipIdx]:null; await Anim.run(()=>Anim.playTorpedo(own, a.path, sh.stopIndex, sh, {owner:true, ship:struck, shipIdx:sh.shipIdx, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; announceTorpedo(sh,false); break; }
-      case 'mine': { if(a.immediate){ const mh=a.immediate; const struck=mh.shipIdx>=0?myFleet[mh.shipIdx]:null; await Anim.run(()=>Anim.playMineHit(own, mh.cell, mh, {owner:true, ship:struck, shipIdx:mh.shipIdx, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; appendLog('them','Enemy mine laid right on your '+SHIP_CLASSES[mh.cls].name+' at '+cellName(mh.cell)+': '+Rules.resultText(mh), mh.turn); toast('MINE! '+Rules.resultText(mh)+' on your '+SHIP_CLASSES[mh.cls].name,'hit',3400); } else { S.game=t.game; S.busy=false; Sfx.splash(); appendLog('them','Enemy laid a mine somewhere in your waters.', g.turn); toast('Enemy laid a mine somewhere in your waters! Moving is now a gamble.','err',3400); } break; }
+      case 'shell': { const shot=a.shot; const struck=shot.shipIdx>=0?myFleet[shot.shipIdx]:null; await runAnim('own', ()=>Anim.playShot(own,{cell:shot.cell, shot, owner:true, ship:struck, shipIdx:shot.shipIdx, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; announceShot(shot,false); if(t.game.current==='guest'&&!t.game.winner) toast('Enemy escort screen: that confirm cost them no shot — they fire again.','err',3200); break; }
+      case 'mg': { const src=a.sighting&&a.sighting.cells?a.sighting.cells:null; await runAnim('own', ()=>Anim.playMG(own, a.cells, a.results, {srcOcean:en, srcCells:src, fromLeft:false, owner:true, fleet:myFleet, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; announceGroup(a.shots,false,'mg'); break; }
+      case 'airstrike': { const src=a.sighting&&a.sighting.cells?a.sighting.cells:null; await runAnim('own', ()=>Anim.playAirstrike(own, a.cells, a.results, {srcOcean:en, srcCells:src, owner:true, fleet:myFleet, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; announceGroup(a.shots,false,'airstrike'); break; }
+      case 'torpedo': { const sh=a.shot; const struck=sh.shipIdx>=0?myFleet[sh.shipIdx]:null; await runAnim('own', ()=>Anim.playTorpedo(own, a.path, sh.stopIndex, sh, {owner:true, ship:struck, shipIdx:sh.shipIdx, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; announceTorpedo(sh,false); break; }
+      case 'mine': { if(a.immediate){ const mh=a.immediate; const struck=mh.shipIdx>=0?myFleet[mh.shipIdx]:null; await runAnim('own', ()=>Anim.playMineHit(own, mh.cell, mh, {owner:true, ship:struck, shipIdx:mh.shipIdx, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; appendLog('them','Enemy mine laid right on your '+SHIP_CLASSES[mh.cls].name+' at '+cellName(mh.cell)+': '+Rules.resultText(mh), mh.turn); toast('MINE! '+Rules.resultText(mh)+' on your '+SHIP_CLASSES[mh.cls].name,'hit',3400); } else { S.game=t.game; S.busy=false; Sfx.splash(); appendLog('them','Enemy laid a mine somewhere in your waters.', g.turn); toast('Enemy laid a mine somewhere in your waters! Moving is now a gamble.','err',3400); } break; }
       case 'radar': { S.game=t.game; S.busy=false; Sfx.radarPing(); const sg=a.sighting; const cells=sg&&sg.cells?sg.cells:null; appendLog('them','Enemy radar sweep from their '+SHIP_CLASSES[sg.cls].name+(cells?' at '+cellName(cells[0])+'–'+cellName(cells[cells.length-1]):'')+' — position marked on your grid.', g.turn); toast('Enemy radar sweep! Their '+SHIP_CLASSES[sg.cls].name+' revealed itself'+(cells?' at '+cellName(cells[0])+'–'+cellName(cells[cells.length-1]):''),'err',3600); break; }
       default: S.game=t.game; S.busy=false;
     }
@@ -3292,24 +3351,23 @@ const UI = (function(){
     if(w==='torpedo'){
       const r=Rules.torpedo(g, them(), {lane:p.lane}); if(!r.ok){ console.warn('torpedo refused', r.reason); return; }
       const sh=r.shot; send('RESULT',{weapon:'torpedo', lane:p.lane, cell:sh.cell, result:sh.result, cls:sh.cls, crippled:sh.crippled, crippledBy:sh.crippledBy, footprint:sh.footprint, stopIndex:sh.stopIndex, turn:sh.turn});
-      const struck=sh.shipIdx>=0?myFleet[sh.shipIdx]:null; S.busy=true; hideBanner(); renderActions(); if(isMobile()) setTab('own');
-      await Anim.run(()=>Anim.playTorpedo(S.oceans.own, r.path, sh.stopIndex, sh, {owner:true, ship:struck, shipIdx:sh.shipIdx, navyId:myNavy, shakeEl:$('#side-own')}));
+      const struck=sh.shipIdx>=0?myFleet[sh.shipIdx]:null; S.busy=true; hideBanner(); renderActions(); setTab('own');
+      await runAnim('own', ()=>Anim.playTorpedo(S.oceans.own, r.path, sh.stopIndex, sh, {owner:true, ship:struck, shipIdx:sh.shipIdx, navyId:myNavy, shakeEl:$('#side-own')}));
       S.game=r.game; S.busy=false; announceTorpedo(sh,false); save(); afterAction(); return;
     }
     if(w==='mg'||w==='airstrike'){
       const r=w==='mg'?Rules.fireMG(g, them(), {ship:p.ship, cells:p.cells}):Rules.airstrike(g, them(), {ship:p.ship, cells:p.cells}); if(!r.ok){ console.warn(w+' refused', r.reason); return; }
       send('RESULT',{weapon:w, cells:p.cells, results:r.results.map(stripRes), turn:g.turn});
-      S.busy=true; hideBanner(); renderActions(); if(isMobile()) setTab('own'); S.oceans.enemy.sightings=r.game.players[me()].sightings;
-      const anim=w==='mg'?Anim.playMG(S.oceans.own, p.cells, r.results, {srcOcean:S.oceans.enemy, srcCells:Rules.shipCells(p.ship), fromLeft:false, owner:true, fleet:myFleet, navyId:myNavy, shakeEl:$('#side-own')})
-                        :Anim.playAirstrike(S.oceans.own, p.cells, r.results, {srcOcean:S.oceans.enemy, srcCells:Rules.shipCells(p.ship), owner:true, fleet:myFleet, navyId:myNavy, shakeEl:$('#side-own')});
-      await Anim.run(()=>anim);
+      S.busy=true; hideBanner(); renderActions(); setTab('own'); S.oceans.enemy.sightings=r.game.players[me()].sightings;
+      await runAnim('own', ()=> w==='mg'?Anim.playMG(S.oceans.own, p.cells, r.results, {srcOcean:S.oceans.enemy, srcCells:Rules.shipCells(p.ship), fromLeft:false, owner:true, fleet:myFleet, navyId:myNavy, shakeEl:$('#side-own')})
+                        :Anim.playAirstrike(S.oceans.own, p.cells, r.results, {srcOcean:S.oceans.enemy, srcCells:Rules.shipCells(p.ship), owner:true, fleet:myFleet, navyId:myNavy, shakeEl:$('#side-own')}));
       S.game=r.game; S.busy=false; announceGroup(r.shots, false, w); save(); afterAction(); return;
     }
     const cell=p.cell; if(!cell){ console.warn('FIRE without cell', p); return; }
     const r=Rules.fire(g, them(), cell); if(!r.ok){ console.warn('FIRE refused', r.reason); return; }
     const shot=r.shot; send('RESULT',{weapon:'shell', cell:shot.cell, result:shot.result, cls:shot.cls, crippled:shot.crippled, crippledBy:shot.crippledBy, footprint:shot.footprint, turn:shot.turn});
-    const struck=shot.shipIdx>=0?myFleet[shot.shipIdx]:null; S.busy=true; hideBanner(); renderActions(); if(isMobile()) setTab('own');
-    await Anim.run(()=>Anim.playShot(S.oceans.own,{cell, shot, owner:true, ship:struck, shipIdx:shot.shipIdx, navyId:myNavy, shakeEl:$('#side-own')}));
+    const struck=shot.shipIdx>=0?myFleet[shot.shipIdx]:null; S.busy=true; hideBanner(); renderActions(); setTab('own');
+    await runAnim('own', ()=>Anim.playShot(S.oceans.own,{cell, shot, owner:true, ship:struck, shipIdx:shot.shipIdx, navyId:myNavy, shakeEl:$('#side-own')}));
     S.game=r.game; S.busy=false; announceShot(shot,false); if(r.freeShot) toast('Enemy escort screen: that confirm cost them no shot — they fire again.','err',3200); save(); afterAction();
   }
   async function onRemoteResult(p){
@@ -3318,23 +3376,22 @@ const UI = (function(){
     const opNavy=g.players[them()].navy; const myFleet=g.players[me()].fleet||[];
     if(w==='torpedo'){
       const r=Rules.torpedo(g, me(), {lane:pf.lane, override:{result:p.result, cls:p.cls, crippled:!!p.crippled, crippledBy:p.crippledBy||null, footprint:p.footprint||null, cell:p.cell, stopIndex:p.stopIndex}}); if(!r.ok){ console.warn('torpedo RESULT refused', r.reason); S.pendingFire=null; renderActions(); return; }
-      S.busy=true; renderActions(); if(isMobile()) setTab('enemy');
-      await Anim.run(()=>Anim.playTorpedo(S.oceans.enemy, r.path, r.shot.stopIndex, r.shot, {owner:false, navyId:opNavy, shakeEl:$('#side-enemy')}));
+      S.busy=true; renderActions(); setTab('enemy');
+      await runAnim('enemy', ()=>Anim.playTorpedo(S.oceans.enemy, r.path, r.shot.stopIndex, r.shot, {owner:false, navyId:opNavy, shakeEl:$('#side-enemy')}));
       S.game=r.game; S.pendingFire=null; S.busy=false; announceTorpedo(r.shot,true); save(); afterAction(); return;
     }
     if(w==='mg'||w==='airstrike'){
       const r=w==='mg'?Rules.fireMG(g, me(), {shipIdx:pf.shipIdx, cells:pf.cells, override:{results:p.results||[]}}):Rules.airstrike(g, me(), {cells:pf.cells, override:{results:p.results||[]}});
       if(!r.ok){ console.warn('RESULT refused', r.reason); S.pendingFire=null; renderActions(); return; }
-      S.busy=true; renderActions(); if(isMobile()) setTab('enemy'); const src=w==='mg'?myFleet[pf.shipIdx]:myFleet[0];
-      const anim=w==='mg'?Anim.playMG(S.oceans.enemy, pf.cells, r.results, {srcOcean:S.oceans.own, srcCells:src?Rules.shipCells(src):null, fromLeft:true, owner:false, navyId:opNavy, shakeEl:$('#side-enemy')})
-                        :Anim.playAirstrike(S.oceans.enemy, pf.cells, r.results, {srcOcean:S.oceans.own, srcCells:src?Rules.shipCells(src):null, owner:false, navyId:opNavy, shakeEl:$('#side-enemy')});
-      await Anim.run(()=>anim);
+      S.busy=true; renderActions(); setTab('enemy'); const src=w==='mg'?myFleet[pf.shipIdx]:myFleet[0];
+      await runAnim('enemy', ()=> w==='mg'?Anim.playMG(S.oceans.enemy, pf.cells, r.results, {srcOcean:S.oceans.own, srcCells:src?Rules.shipCells(src):null, fromLeft:true, owner:false, navyId:opNavy, shakeEl:$('#side-enemy')})
+                        :Anim.playAirstrike(S.oceans.enemy, pf.cells, r.results, {srcOcean:S.oceans.own, srcCells:src?Rules.shipCells(src):null, owner:false, navyId:opNavy, shakeEl:$('#side-enemy')}));
       S.game=r.game; S.pendingFire=null; S.busy=false; announceGroup(r.shots, true, w); save(); afterAction(); return;
     }
     const cell=pf.cell; if(!p.cell||p.cell.x!==cell.x||p.cell.y!==cell.y){ console.warn('RESULT for a different cell', p); }
     const r=Rules.fire(g, me(), cell, {result:p.result, cls:p.cls, crippled:!!p.crippled, crippledBy:p.crippledBy||null, footprint:p.footprint||null}); if(!r.ok){ console.warn('RESULT refused', r.reason); S.pendingFire=null; renderActions(); return; }
-    S.busy=true; renderActions(); if(isMobile()) setTab('enemy');
-    await Anim.run(()=>Anim.playShot(S.oceans.enemy,{cell, shot:r.shot, owner:false, navyId:opNavy, shakeEl:$('#side-enemy')}));
+    S.busy=true; renderActions(); setTab('enemy');
+    await runAnim('enemy', ()=>Anim.playShot(S.oceans.enemy,{cell, shot:r.shot, owner:false, navyId:opNavy, shakeEl:$('#side-enemy')}));
     S.game=r.game; S.pendingFire=null; S.busy=false; announceShot(r.shot,true); if(r.freeShot) toast('Escort screen: that confirm cost no shot — fire again!','sunk',3200); save(); afterAction();
   }
 
