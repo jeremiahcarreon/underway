@@ -30,7 +30,7 @@ button.small{min-height:34px;padding:6px 10px;font-size:13px}
 /* any toggle-style button that is currently chosen */
 button.selected,.tabs button.active{background:var(--accent);color:#1a1200;font-weight:700;border-color:#e39b2c;box-shadow:0 0 0 2px #ffb34755}
 button.icon{min-width:44px;padding:6px}
-input[type=text]{font-family:inherit;font-size:16px;color:var(--text);background:#0a1621;border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:44px;width:100%}
+input[type=text],input[type=password]{font-family:inherit;font-size:16px;color:var(--text);background:#0a1621;border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:44px;width:100%}
 input[type=range]{width:100%}
 h1,h2,h3{margin:0 0 8px 0;font-weight:700;letter-spacing:.02em}
 h1{font-size:34px;letter-spacing:.18em}
@@ -78,6 +78,16 @@ h3{font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.12
 .ocean canvas{display:block;width:100%;height:auto;border-radius:10px;touch-action:none;background:#0a2438;grid-column:1 / -1;grid-row:2}
 .ocean .label{grid-row:1;grid-column:1;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#cfe3f5;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:20px}
 .ocean .badge{grid-row:1;grid-column:2;font-size:11px;letter-spacing:.1em;color:#fff;background:#0008;padding:2px 8px;border-radius:10px;white-space:nowrap}
+.ocean .prompt{position:absolute;left:8px;right:8px;bottom:8px;z-index:4;display:none;background:#0a1621f2;border:1px solid var(--accent);border-radius:10px;padding:8px 10px;font-size:13.5px;box-shadow:0 8px 30px #000b}
+.ocean .prompt.show{display:block}
+.ocean .prompt .ptext{line-height:1.35;margin-bottom:6px}
+.ocean .prompt .row{gap:6px}
+.strip{margin:0 auto 6px;max-width:560px}
+.strip .weapons{flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}
+.strip .weapons .wgroup{flex:0 0 auto}
+.strip #weapon-desc{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+#btn-drawer{display:none;width:100%;margin:8px 0}
+@media (min-width: 721px){ .strip .weapons{flex-wrap:wrap;overflow:visible} .strip #weapon-desc{white-space:normal} }
 
 /* ---- fleet dock ---- */
 .dock{display:flex;flex-direction:column;gap:4px;margin-top:8px}
@@ -222,6 +232,9 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
   .battle .side.inactive{display:none}
   .logbox{height:160px}
   .ocean{max-width:100%}
+  #btn-drawer{display:block}
+  #screen-battle:not(.drawer-open) .drawerable{display:none!important}
+  .actions{position:static}
   .actions{gap:5px}
   .actions button{padding:8px 10px;font-size:14px}
   .actions select{max-width:150px}
