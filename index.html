@@ -1514,13 +1514,93 @@ const AI = (function(){
     }
     return huntShot(shots, mem, rng);
   }
+  /* ---- Fleet Admiral: probability map over placements consistent with recent evidence ---- */
+  function densityMap(game, pid, mem){
+    const p=game.players[pid]; const shots=p.shots; const turn=game.turn; const latest=new Map(); shots.forEach(s=>latest.set(key(s.cell),s));
+    const sunk=new Set(shots.filter(s=>s.result===RESULT.SUNK).map(s=>s.cls)); const wreck=new Set(); shots.filter(s=>s.result===RESULT.SUNK&&s.footprint).forEach(s=>s.footprint.forEach(c=>wreck.add(key(c))));
+    const isHitLike=s=>s&&(s.result===RESULT.HIT||s.result===RESULT.CONFIRMED||s.result===RESULT.GRAZE);
+    const contacts=(mem.contacts||[]).filter(c=>turn-c.turn<=4);
+    const score=new Map();
+    CLASS_ORDER.forEach(cls=>{
+      if(sunk.has(cls)) return;
+      const live=shots.filter(s=>s.cls===cls&&isHitLike(s)&&latest.get(key(s.cell))===s); const anchor=live.length?live.slice().sort((a,b)=>b.turn-a.turn)[0].cell:null; const ct=contacts.filter(c=>c.cls===cls);
+      for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++) HEADINGS.forEach(h=>{
+        const cells=Rules.shipCells({cls,bow:{x,y},heading:h}); if(cells.some(c=>!Rules.inBounds(c))) return;
+        for(const c of cells){ const k=key(c); if(wreck.has(k)) return; const s=latest.get(k); if(s&&s.result===RESULT.MISS&&turn-s.turn<=6) return; if(isHitLike(s)&&s.cls&&s.cls!==cls) return; }
+        if(anchor&&!cells.some(c=>c.x===anchor.x&&c.y===anchor.y)) return;
+        let w=1; if(anchor) w*=6; ct.forEach(k=>{ if(cells.some(c=>c.x===k.cell.x&&c.y===k.cell.y)) w*=4; });
+        cells.forEach(c=>{ const k=key(c); score.set(k,(score.get(k)||0)+w); });
+      });
+    });
+    return score;
+  }
+  function densityShot(game, pid, mem, rng){
+    const shots=game.players[pid].shots; const latest=new Map(); shots.forEach(s=>latest.set(key(s.cell),s)); const turn=game.turn;
+    const fresh=(mem.contacts||[]).filter(c=>turn-c.turn<=4&&!(latest.get(key(c.cell))&&latest.get(key(c.cell)).turn>c.turn)); if(fresh.length) return fresh.sort((a,b)=>b.turn-a.turn)[0].cell;
+    const score=densityMap(game,pid,mem); let best=[], bs=-1;
+    score.forEach((v,k)=>{ const s=latest.get(k); if(s&&(s.result!==RESULT.MISS||turn-s.turn<=6)) return; if(v>bs){ bs=v; best=[k]; } else if(v===bs) best.push(k); });
+    if(!best.length) return null; const k=rng.pick(best); const [x,y]=k.split(',').map(Number); return {x,y};
+  }
+  function fleetShot(game, pid, mem, rng){
+    const shots=game.players[pid].shots; const last=shots[shots.length-1];
+    // reuse the Admiral's chase logic while a chase is pending or a bracket just missed; otherwise the probability map
+    if(mem.chase || (last&&last.result===RESULT.MISS&&liveHits(shots).some(h=>Math.abs(h.cell.x-last.cell.x)+Math.abs(h.cell.y-last.cell.y)===1))) return admiralShot(shots, mem, rng);
+    return densityShot(game,pid,mem,rng) || admiralShot(shots, mem, rng);
+  }
   function chooseShot(game, pid, rng){
     const p=game.players[pid]; const mem=game.ai;
     switch(mem.level){
       case 'random': return randomShot(p.shots, rng);
       case 'hunter': return hunterShot(p.shots, mem, rng);
+      case 'fleet': return fleetShot(game, pid, mem, rng);
       default: return admiralShot(p.shots, mem, rng);
     }
+  }
+  /* ---- Weapon plans (Admiral: mines + machine gun; Fleet Admiral: everything the game enables) ---- */
+  function lineEnds(cells, axis){ if(axis==='x'){ const y=cells[0].y, xs=cells.map(c=>c.x); return [{x:Math.min(...xs)-1,y},{x:Math.max(...xs)+1,y}]; } const x=cells[0].x, ys=cells.map(c=>c.y); return [{x,y:Math.min(...ys)-1},{x,y:Math.max(...ys)+1}]; }
+  function aliveShip(fleet){ return fleet.findIndex(s=>s.bow&&!s.sunk); }
+  function bestLane(shots, turn){
+    const latest=new Map(); shots.forEach(s=>latest.set(key(s.cell),s)); const live=liveHits(shots); const wreck=new Set(); shots.filter(s=>s.result===RESULT.SUNK&&s.footprint).forEach(s=>s.footprint.forEach(c=>wreck.add(key(c))));
+    let best=null, bs=0;
+    ['row','col'].forEach(axis=>{ for(let i=0;i<SIZE;i++) [1,-1].forEach(dir=>{ const lane={axis,index:i,dir}; const path=Rules.torpedoPath(lane); let n=0, blocked=false; for(const c of path){ const k=key(c); if(wreck.has(k)){ blocked=n===0; break; } if(live.some(h=>key(h.cell)===k)) n++; } if(!blocked&&n>bs){ bs=n; best=lane; } }); });
+    return bs>=1?best:null;
+  }
+  function bestRadarAnchor(game, pid, shipIdx, shots){
+    const taken=shotMap(shots); const cls=game.players[pid].fleet[shipIdx].cls; let best=null, bs=-1;
+    for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++){ const a=Rules.radarAreaFor(game,pid,cls,{x,y}); let n=0; for(let yy=a.y;yy<a.y+a.size;yy++) for(let xx=a.x;xx<a.x+a.size;xx++){ if(!taken.has(xx+','+yy)) n++; } if(n>bs){ bs=n; best={x:a.x,y:a.y}; } }
+    return best;
+  }
+  function strikeWindow(cells, axis, shots, turn){
+    const latest=new Map(); shots.forEach(s=>latest.set(key(s.cell),s)); const horizontal=axis==='x'; const n=WEAPONS.airstrike.bombs;
+    const fixed=horizontal?cells[0].y:cells[0].x; const vals=cells.map(c=>horizontal?c.x:c.y); const lo=Math.min(...vals), hi=Math.max(...vals);
+    const cand=[]; for(let start=hi-n+1; start<=lo; start++){ const st=Math.max(0,Math.min(SIZE-n,start)); const win=[]; for(let i=0;i<n;i++) win.push(horizontal?{x:st+i,y:fixed}:{x:fixed,y:st+i}); const fresh=win.filter(c=>{ const s=latest.get(key(c)); return !s||(s.result===RESULT.MISS&&turn-s.turn>6); }).length; cand.push({win,fresh}); }
+    if(!cand.length) return null; cand.sort((a,b)=>b.fresh-a.fresh); return cand[0].win;
+  }
+  function planWeapon(game, pid, mem, rng){
+    if(mem.level!=='admiral'&&mem.level!=='fleet') return null;
+    const p=game.players[pid]; const shots=p.shots; const fleet=p.fleet||[]; const ready=id=>Rules.weaponReady(game,pid,id).ok; const taken=shotMap(shots);
+    const live=liveHits(shots); const byCls={}; live.forEach(s=>{ (byCls[s.cls]=byCls[s.cls]||[]).push(s.cell); });
+    const lined=Object.entries(byCls).map(([cls,cells])=>({cls,cells,axis:lineAxis(cells)})).filter(o=>o.axis);
+    if(ready('mine')&&lined.length){ const o=lined[0]; const mined=new Set((p.mines||[]).map(m=>key(m.cell))); const cand=lineEnds(o.cells,o.axis).filter(c=>Rules.inBounds(c)&&!mined.has(key(c))&&!(taken.get(key(c))&&taken.get(key(c)).result!==RESULT.MISS)); if(cand.length) return {weapon:'mine', cell:rng.pick(cand)}; }
+    const lone=live.length&&!lined.length?live[live.length-1].cell:null;
+    if(mem.level==='admiral'){ if(ready('mg')&&lone){ const nb=neighbors(lone).filter(c=>!(taken.get(key(c))&&taken.get(key(c)).result!==RESULT.MISS)); const nBul=Rules.weaponSpec(game,pid,'mg').bullets; if(nb.length>=nBul){ const idx=aliveShip(fleet); if(idx>=0) return {weapon:'mg', cells:nb.slice(0,nBul), shipIdx:idx}; } } return null; }
+    // Fleet Admiral
+    const carrier=fleet[0]; if(ready('airstrike')&&lined.length&&carrier&&!carrier.sunk&&Rules.hitCount(carrier)===0){ const o=lined[0]; const win=strikeWindow(o.cells,o.axis,shots,game.turn); if(win) return {weapon:'airstrike', cells:win}; }
+    const sub=fleet[Rules.SUB_IDX]; const subOk=sub&&sub.bow&&!sub.sunk&&(Rules.weaponSpec(game,pid,'torpedo').damagedOk||Rules.hitCount(sub)===0)&&!(game.movedShips||[]).includes(Rules.SUB_IDX);
+    if(ready('torpedo')&&subOk){ const lane=bestLane(shots,game.turn); if(lane) return {weapon:'torpedo', lane}; }
+    if(ready('radar')&&!live.length){ const idx=fleet.findIndex(sh=>sh.bow&&!sh.sunk&&Rules.hitCount(sh)===0); if(idx>=0){ const anchor=bestRadarAnchor(game,pid,idx,shots); if(anchor) return {weapon:'radar', shipIdx:idx, anchor}; } }
+    if(ready('mg')&&lone){ const nb=neighbors(lone).filter(c=>!(taken.get(key(c))&&taken.get(key(c)).result!==RESULT.MISS)); const nBul=Rules.weaponSpec(game,pid,'mg').bullets; if(nb.length>=nBul){ const idx=aliveShip(fleet); if(idx>=0) return {weapon:'mg', cells:nb.slice(0,nBul), shipIdx:idx}; } }
+    return null;
+  }
+  function execPlan(game, pid, plan){
+    switch(plan.weapon){
+      case 'mine': { const r=Rules.layMine(game,pid,plan.cell); return r.ok?{game:r.game, info:{cell:plan.cell, immediate:r.immediate||null}}:null; }
+      case 'mg': { const r=Rules.fireMG(game,pid,{shipIdx:plan.shipIdx, cells:plan.cells}); return r.ok?{game:r.game, info:{cells:plan.cells, results:r.results, shots:r.shots, shipIdx:plan.shipIdx, sighting:r.sighting}}:null; }
+      case 'torpedo': { const r=Rules.torpedo(game,pid,{lane:plan.lane}); return r.ok?{game:r.game, info:{lane:plan.lane, shot:r.shot, path:r.path}}:null; }
+      case 'radar': { const r=Rules.radar(game,pid,{shipIdx:plan.shipIdx, anchor:plan.anchor}); if(!r.ok) return null; r.game.ai.contacts=r.contacts.map(c=>({cell:c.cell, cls:c.cls, turn:game.turn})); return {game:r.game, info:{area:r.area, contacts:r.contacts.length, shipIdx:plan.shipIdx, sighting:r.sighting}}; }
+      case 'airstrike': { const r=Rules.airstrike(game,pid,{cells:plan.cells}); return r.ok?{game:r.game, info:{cells:plan.cells, results:r.results, shots:r.shots, sighting:r.sighting}}:null; }
+    }
+    return null;
   }
   // Maneuver selection (Admiral only): move damaged ships away from recent hits; sometimes rotate undamaged ships out of a bracket.
   function chooseManeuver(game, pid, rng){
@@ -1563,12 +1643,16 @@ const AI = (function(){
     const mv=chooseManeuver(g, pid, rng);
     if(mv){ const r=Rules.maneuver(g, pid, mv.ship, mv.type); if(r.ok){ g=r.game; move=mv; rotated=!!r.ended; } }
     if(rotated) return {game:g, move, shot:null, rotated};
+    if(g.bonusMove){ const r2=Rules.skipManeuver(g,pid); if(r2.ok) g=r2.game; }
+    const plan=planWeapon(g, pid, g.ai, rng);
+    if(plan){ const ex=execPlan(g, pid, plan); if(ex){ return {game:ex.game, move, shot:null, rotated:false, action:Object.assign({weapon:plan.weapon}, ex.info)}; } }
     const cell=chooseShot(g, pid, rng);
     const fr=Rules.fire(g, pid, cell);
     if(!fr.ok) return {game:g, move, shot:null, rotated:false, error:fr.reason};
-    return {game:fr.game, move, shot:fr.shot, rotated:false};
+    return {game:fr.game, move, shot:fr.shot, rotated:false, action:{weapon:'shell', shot:fr.shot}};
   }
-  return { initMemory, placeFleet, chooseShot, chooseManeuver, takeTurn, randomShot, hunterShot, admiralShot, liveHits };
+  const LEVELS=['random','hunter','admiral','fleet'];
+  return { initMemory, placeFleet, chooseShot, chooseManeuver, takeTurn, randomShot, hunterShot, admiralShot, fleetShot, densityMap, planWeapon, liveHits, LEVELS };
 })();
 
 /* ============================================================
