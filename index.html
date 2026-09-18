@@ -3624,7 +3624,7 @@ const Tests = (function(){
         else { const t=AI.takeTurn(g,'guest',rng); ok(!t.error,t.error); g=t.game; }
       }
       ok(g.winner,'game finished'); ok(guard<600,'took too long');
-      if(level==='random') ok(g.players.guest.moves.length===0,'random never moves');
+      if(level==='random') ok(g.players.guest.moves.length>0,'random wanders');
       if(level==='hunter') ok(g.players.guest.moves.length===0,'hunter never moves');
     });
   });
