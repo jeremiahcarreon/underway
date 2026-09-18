@@ -3707,7 +3707,17 @@ const Tests = (function(){
   });
 
   /* --- AI --- */
-  ['random','hunter','admiral'].forEach(level=>{
+  test('AI fleet: density targeting proposes a legal unknown cell and uses every enabled weapon over a game', ()=>{
+    let g=Rules.createGame({room:'AI0003',mode:'ai',aiLevel:'fleet',seed:33}); const rng=RNG(33);
+    g=Rules.setFleet(g,'host',Rules.randomFleet(rng)).game; g=Rules.setFleet(g,'guest',AI.placeFleet(rng)).game; g=Rules.startBattle(g,'guest'); g.ai=AI.initMemory('fleet');
+    const c=AI.fleetShot(g,'guest',g.ai,rng); ok(c&&Rules.inBounds(c),'first fleet shot legal');
+    const used=new Set(); let guard=0;
+    while(!g.winner&&guard++<500){ if(g.current==='guest'){ const t=AI.takeTurn(g,'guest',rng); ok(!t.error,t.error); g=t.game; if(t.action) used.add(t.action.weapon); } else { const r=Rules.fire(g,'host',{x:rng.int(10),y:rng.int(10)}); g=r.ok?r.game:Rules.skipManeuver(g,'host').game; } }
+    ok(g.winner,'finished'); ok(used.has('shell'),'shells used'); ok(used.has('radar')||used.has('mg')||used.has('torpedo')||used.has('mine')||used.has('airstrike'),'at least one special weapon used: '+[...used].join(','));
+    let c2=Rules.createGame({room:'AI0004',mode:'ai',aiLevel:'fleet',seed:34,options:OPTION_PRESETS.classic}); const rng2=RNG(34); c2=Rules.setFleet(c2,'host',Rules.randomFleet(rng2)).game; c2=Rules.setFleet(c2,'guest',AI.placeFleet(rng2)).game; c2=Rules.startBattle(c2,'guest'); c2.ai=AI.initMemory('fleet');
+    for(let i=0;i<12&&!c2.winner;i++){ if(c2.current==='guest'){ const t=AI.takeTurn(c2,'guest',rng2); ok(!t.error,t.error); ok(!t.action||t.action.weapon==='shell','classic game: shells only'); c2=t.game; } else c2=Rules.fire(c2,'host',{x:i,y:0}).game; }
+  });
+  ['random','hunter','admiral','fleet'].forEach(level=>{
     test('AI '+level+' plays a full game to completion', ()=>{
       let g=Rules.createGame({room:'AI0001',mode:'ai',aiLevel:level,seed:21}); const rng=RNG(21);
       g=Rules.setFleet(g,'host',Rules.randomFleet(rng)).game; g=Rules.setFleet(g,'guest',AI.placeFleet(rng)).game; g=Rules.startBattle(g,'host'); g.ai=AI.initMemory(level);
