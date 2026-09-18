@@ -2716,8 +2716,8 @@ const UI = (function(){
       if(!r.navies.length) tn.innerHTML='<tr><td colspan="4" class="sub">No finished player-versus-player games yet.</td></tr>';
       $('#board-sub').textContent=(r.notes&&r.notes.ranking?r.notes.ranking+' ':'')+r.games+' finished player-versus-player game'+(r.games===1?'':'s')+' on this server.';
       $('#board-ai-note').textContent=r.notes&&r.notes.solo?r.notes.solo+' Wins and losses by AI level.':'';
-      const ta2=$('#board-ai tbody'); ta2.innerHTML=''; (r.vsAI||[]).forEach(a=>{ const lv=k=>a.levels[k]?a.levels[k].wins+'–'+a.levels[k].losses:'—'; const tr=document.createElement('tr'); tr.innerHTML='<td><b>'+a.name+'</b></td><td>'+a.wins+'</td><td>'+a.losses+'</td><td>'+lv('random')+'</td><td>'+lv('hunter')+'</td><td>'+lv('admiral')+'</td><td>'+lv('fleet')+'</td>'; ta2.appendChild(tr); });
-      if(!(r.vsAI||[]).length) ta2.innerHTML='<tr><td colspan="7" class="sub">No solo games recorded yet. Play the AI while signed in.</td></tr>';
+      const ta2=$('#board-ai tbody'); ta2.innerHTML=''; (r.vsAI||[]).forEach(a=>{ const lv=k=>a.levels[k]?a.levels[k].wins+'–'+a.levels[k].losses:'—'; const tr=document.createElement('tr'); tr.innerHTML='<td><b>'+a.name+'</b></td><td>'+a.wins+'</td><td>'+a.losses+'</td><td>'+lv('hunter')+'</td><td>'+lv('admiral')+'</td><td>'+lv('fleet')+'</td>'; ta2.appendChild(tr); });
+      if(!(r.vsAI||[]).length) ta2.innerHTML='<tr><td colspan="6" class="sub">No solo games recorded yet. Play the AI while signed in.</td></tr>';
     }catch(e){ toast(e.message,'err',3600); }
   }
   function bindHome(){
@@ -2776,7 +2776,7 @@ const UI = (function(){
     renderOptions();
     let status=''; const startBtn=$('#btn-lobby-start');
     if(S.mode==='net'){ if(S.role==='host'){ status=l.guestOnline?(l.guestNavy&&l.hostNavy?'Both navies chosen. Confirm to start placing fleets.':'Opponent connected. Choose navies.'):(l.guestName?'Opponent '+l.guestName+' is away — the game waits for them.':'Share the game code or link. Waiting for an opponent to join…'); startBtn.classList.remove('hidden'); startBtn.disabled=!(l.guestOnline&&l.hostNavy&&l.guestNavy); } else { status=l.hostNavy?'Host has chosen '+navy(l.hostNavy).name+'. Pick your navy; the host confirms.':'Connected. Waiting for the host to choose…'; startBtn.classList.add('hidden'); } }
-    else if(S.mode==='ai'){ status='Pick your navy. The AI ('+({random:'Random, wanders',hunter:'Hunter, static fleet',admiral:'Admiral, maneuvers and mines',fleet:'Fleet Admiral, every weapon'}[S.aiLevel]||S.aiLevel)+') takes one of the rest.'; startBtn.classList.remove('hidden'); startBtn.disabled=!(l.hostNavy&&l.guestNavy); }
+    else if(S.mode==='ai'){ status='Pick your navy. The AI ('+({hunter:'Hunter, static fleet',admiral:'Admiral, maneuvers and mines',fleet:'Fleet Admiral, every weapon'}[S.aiLevel]||S.aiLevel)+') takes one of the rest.'; startBtn.classList.remove('hidden'); startBtn.disabled=!(l.hostNavy&&l.guestNavy); }
     else { status=(pid==='host'?(l.hostName||'Player 1'):(l.guestName||'Player 2'))+' picks a navy'+(pid==='host'?', then hand over to Player 2.':'.'); startBtn.classList.remove('hidden'); startBtn.textContent=pid==='host'&&!l.guestNavy?'Next: Player 2 picks':'Confirm & place fleets'; startBtn.disabled=pid==='host'?!l.hostNavy:!(l.hostNavy&&l.guestNavy); }
     if(S.mode!=='hotseat') startBtn.textContent='Confirm & place fleets';
     $('#lobby-status').textContent=status;
