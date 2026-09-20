@@ -2543,7 +2543,7 @@ const UI = (function(){
   const S={ screen:'home', room:null, role:null, mode:null, aiLevel:'admiral', name:'', navy:null, game:null, sock:null, rel:null, rng:null, admiral:null, oppOnline:false, pendingJoin:null, sessionLive:false,
             lobby:{hostNavy:null,guestNavy:null,hostName:'',guestName:'',stage:'lobby',guestOnline:false,hostReady:false,guestReady:false,picker:'host',rematch:false,nextFirst:null},
             pendingFire:null, oppHistory:null, settings:null, oceans:{own:null,enemy:null,place:null}, place:{pid:'host',fleet:null,sel:0,drag:null,locked:false},
-            target:null, targets:[], weapon:'shell', airDir:true, torpDir:0, pendingMove:null, dragHint:false, lastAction:null, queue:Promise.resolve(), selShip:0, viewAs:'host', tab:'own', gameOverHandled:false, myRematch:false, oppRematch:false, chatLog:[], busy:false, gameOverSent:false, linkState:'offline' };
+            target:null, targets:[], weapon:'shell', airDir:true, torpDir:0, pendingMove:null, moveSel:false, fireFrom:0, result:null, targetAt:0, lastAction:null, coach:{needed:false, seen:{}}, coachStep:null, queue:Promise.resolve(), selShip:0, viewAs:'host', tab:'own', gameOverHandled:false, myRematch:false, oppRematch:false, chatLog:[], busy:false, gameOverSent:false, linkState:'offline' };
   const randomId=()=>Math.random().toString(36).slice(2,10)+Date.now().toString(36);
   const me=()=>S.mode==='net'?S.role:S.viewAs; const them=()=>Rules.other(me());
   const isMobile=()=>window.innerWidth<=720;
@@ -2551,10 +2551,22 @@ const UI = (function(){
   /* ---------- generic UI helpers ---------- */
   function showScreen(name){ $$('.screen').forEach(s=>s.classList.toggle('active',s.id==='screen-'+name)); S.screen=name; window.scrollTo(0,0); if(name==='battle'){ Object.values(S.oceans).forEach(o=>o&&o.resize()); } }
   function overlay(id,on){ const el=$('#'+id); if(el) el.classList.toggle('active',!!on); }
-  function toast(text, cls, ms){ const box=$('#toasts'); const el=document.createElement('div'); el.className='toast '+(cls||''); el.textContent=text; box.appendChild(el); while(box.children.length>4) box.removeChild(box.firstChild); setTimeout(()=>{ el.style.transition='opacity .4s'; el.style.opacity='0'; setTimeout(()=>el.remove(),450); }, ms||2600); }
-  let bannerTimer=0;
-  function banner(text, radar, ms){ const b=$('#banner'); $('#banner-text').textContent=text; $('#banner-radar').classList.toggle('hidden',!radar); b.classList.add('show'); clearTimeout(bannerTimer); if(ms) bannerTimer=setTimeout(()=>b.classList.remove('show'),ms); }
-  function hideBanner(){ $('#banner').classList.remove('show'); clearTimeout(bannerTimer); }
+  function toast(text, cls, ms){
+    if(S.screen==='battle'){ trayNotice(text, cls, ms); return; }
+    const box=$('#toasts'); const el=document.createElement('div'); el.className='toast '+(cls||''); el.textContent=text; box.appendChild(el); while(box.children.length>4) box.removeChild(box.firstChild); setTimeout(()=>{ el.style.transition='opacity .4s'; el.style.opacity='0'; setTimeout(()=>el.remove(),450); }, ms||2600);
+  }
+  // In a battle nothing floats over the map: results become a card in the tray, everything else a one-line notice there.
+  let noticeTimer=0, resultTimer=0;
+  function trayNotice(text, cls, ms){
+    if(cls==='hit'||cls==='miss'||cls==='sunk'){ setResult(text, cls); return; }
+    if(cls==='chat'&&isMobile()) return; // radio chatter stays in the log on phones
+    const el=$('#tray-msg'); el.textContent=text; el.className='tray-msg '+(cls||''); clearTimeout(noticeTimer); noticeTimer=setTimeout(()=>{ el.textContent=''; syncTrayHeight(); }, ms||2600); syncTrayHeight();
+  }
+  function setResult(text, cls){ S.result={text, cls}; clearTimeout(resultTimer); if(S.settings.autoContinue) resultTimer=setTimeout(()=>{ S.result=null; renderResult(); }, 4500); vib(cls==='sunk'?[40,60,40,60,80]:cls==='hit'?[20,40,30]:8); renderResult(); }
+  function renderResult(){ const el=$('#tray-result'); const r=S.result; el.className='tray-result '+(r?r.cls:'hidden'); if(r){ $('#result-text').textContent=r.text; const rp=$('#btn-replay-last'); rp.classList.toggle('hidden',!S.lastAction); rp.disabled=!!S.busy; } syncTrayHeight(); }
+  function syncTrayHeight(){ const t=$('#tray'); if(t) document.documentElement.style.setProperty('--tray-h',(t.offsetHeight+10)+'px'); }
+  function vib(p){ if(S.settings&&S.settings.vibrate!==false&&navigator.vibrate){ try{ navigator.vibrate(p); }catch(e){} } }
+  function flashStatus(){ $$('.turn-status').forEach(el=>{ el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }); }
   function confirmDialog(title, text, yesLabel){ return new Promise(res=>{ $('#confirm-title').textContent=title; $('#confirm-text').textContent=text; $('#confirm-yes').textContent=yesLabel||'Confirm'; overlay('ov-confirm',true); const y=$('#confirm-yes'), n=$('#confirm-no'); const done=v=>{ overlay('ov-confirm',false); y.onclick=null; n.onclick=null; res(v); }; y.onclick=()=>done(true); n.onclick=()=>done(false); }); }
   function curtain(title, text){ return new Promise(res=>{ $('#curtain-title').textContent=title; $('#curtain-text').textContent=text||''; const c=$('#curtain'); c.classList.add('active'); $('#curtain-go').onclick=()=>{ c.classList.remove('active'); Sfx.unlock(); res(); }; }); }
   function fill(tpl, vars){ return tpl.replace(/\{(\w+)\}/g,(m,k)=>vars&&vars[k]!=null?vars[k]:m); }
@@ -2567,11 +2579,11 @@ const UI = (function(){
 
   /* ---------- settings ---------- */
   function loadSettings(){ S.settings=Store.loadSettings(); applySettings(); }
-  function applySettings(){ const s=S.settings; Sfx.applySettings(s); Anim.settings.fast=!!s.fast; Anim.settings.reduced=!!s.reduced; Render.setReduced(!!s.reduced); $('#set-volume').value=String(Math.round(s.volume*100)); ['mute','voice','fast','reduced','ambient'].forEach(k=>$('#set-'+k).classList.toggle('on',!!s[k])); }
+  function applySettings(){ const s=S.settings; Sfx.applySettings(s); Anim.settings.fast=!!s.fast; Anim.settings.reduced=!!s.reduced; Render.setReduced(!!s.reduced); $('#set-volume').value=String(Math.round(s.volume*100)); ['mute','voice','fast','reduced','ambient','vibrate','autoContinue'].forEach(k=>$('#set-'+k).classList.toggle('on',!!s[k])); }
   function saveSettings(){ Store.saveSettings(S.settings); applySettings(); }
   function bindSettings(){
     $('#set-volume').addEventListener('input',e=>{ S.settings.volume=parseInt(e.target.value,10)/100; saveSettings(); });
-    ['mute','voice','fast','reduced','ambient'].forEach(k=>$('#set-'+k).addEventListener('click',()=>{ Sfx.unlock(); S.settings[k]=!S.settings[k]; saveSettings(); Sfx.click(); }));
+    ['mute','voice','fast','reduced','ambient','vibrate','autoContinue'].forEach(k=>$('#set-'+k).addEventListener('click',()=>{ Sfx.unlock(); S.settings[k]=!S.settings[k]; saveSettings(); Sfx.click(); }));
     $('#btn-settings-close').addEventListener('click',()=>overlay('ov-settings',false));
     $('#btn-settings').addEventListener('click',()=>{ Sfx.unlock(); overlay('ov-settings',true); });
     $('#btn-settings-home').addEventListener('click',()=>{ Sfx.unlock(); overlay('ov-settings',true); });
@@ -2612,7 +2624,7 @@ const UI = (function(){
 
   /* ---------- session creation ---------- */
   function newGame(room, mode){ const g=Rules.createGame({room, mode, seed:hashString(room), aiLevel:S.aiLevel, hostName:S.mode==='net'&&S.role==='guest'?'Host':S.name, guestName:mode==='ai'?'Admiral AI':(mode==='hotseat'?'Player 2':'Guest')}); if(mode==='net'&&S.role==='guest') g.players.guest.name=S.name; if(mode==='hotseat') g.players.host.name=S.name||'Player 1'; return g; }
-  function resetSessionState(){ S.pendingFire=null; S.oppHistory=null; S.gameOverHandled=false; S.gameOverSent=false; S.myRematch=false; S.oppRematch=false; S.chatLog=[]; S.target=null; S.targets=[]; S.weapon='shell'; S.airDir=true; S.selShip=0; S.place={pid:'host',fleet:null,sel:0,drag:null,locked:false}; S.lobby.hostReady=false; S.lobby.guestReady=false; S.lobby.stage='lobby'; }
+  function resetSessionState(){ S.pendingFire=null; S.oppHistory=null; S.gameOverHandled=false; S.gameOverSent=false; S.myRematch=false; S.oppRematch=false; S.chatLog=[]; S.target=null; S.targets=[]; S.weapon='shell'; S.airDir=true; S.selShip=0; S.moveSel=false; S.pendingMove=null; S.result=null; S.fireFrom=0; S.lastAction=null; S.place={pid:'host',fleet:null,sel:0,drag:null,locked:false}; S.lobby.hostReady=false; S.lobby.guestReady=false; S.lobby.stage='lobby'; }
   function startNet(role, code, opts){
     opts=opts||{}; S.mode='net'; S.role=role; S.room=String(code).toUpperCase(); S.navy=null; S.name=S.admiral?S.admiral.name:(S.settings.name||'Admiral'); resetSessionState(); disconnect(); S.sessionLive=false;
     S.lobby={hostNavy:null,guestNavy:null,hostName:role==='host'?S.name:'',guestName:role==='guest'?S.name:'',stage:'lobby',guestOnline:false,hostReady:false,guestReady:false,picker:'host',rematch:!!opts.nextFirst,nextFirst:opts.nextFirst||null};
@@ -2628,7 +2640,7 @@ const UI = (function(){
     history.replaceState(null,'','?room='+S.room);
     showScreen('lobby'); renderLobby(); save();
   }
-  function leaveToHome(){ disconnect(); if(S.room&&S.mode!=='net') Store.remove(S.room); S.room=null; S.game=null; history.replaceState(null,'',location.pathname); hideBanner(); showScreen('home'); renderHome(); }
+  function leaveToHome(){ disconnect(); if(S.room&&S.mode!=='net') Store.remove(S.room); S.room=null; S.game=null; history.replaceState(null,'',location.pathname); showScreen('home'); renderHome(); }
 
   /* ---------- networking ---------- */
   function serverBase(){ if(S.settings&&S.settings.server) return S.settings.server.replace(/\/$/,''); return /^https?:/.test(location.origin)?location.origin:null; }
@@ -2673,7 +2685,7 @@ const UI = (function(){
   function renderConn(st, detail){
     const opp=S.oppOnline?' · opponent online':' · opponent away';
     const label={init:'offline',connecting:'connecting…',online:'connected'+opp,reconnecting:'reconnecting…',error:'error',closed:'offline',offline:'offline'}[st]||st;
-    ['#lobby-conn','#place-conn','#battle-conn'].forEach(sel=>{ const el=$(sel); if(!el) return; el.className='conn '+(st==='online'?'online':st==='reconnecting'||st==='connecting'?'reconnecting':'offline'); el.querySelector('.txt').textContent=S.mode==='net'?label+(detail&&st!=='online'?' ('+detail+')':''):(S.mode==='ai'?'versus AI':S.mode==='hotseat'?'hotseat':''); });
+    ['#lobby-conn','#place-conn','#battle-conn','#battle-conn-m'].forEach(sel=>{ const el=$(sel); if(!el) return; el.className='conn '+(st==='online'?'online':st==='reconnecting'||st==='connecting'?'reconnecting':'offline'); el.querySelector('.txt').textContent=S.mode==='net'?label+(detail&&st!=='online'?' ('+detail+')':''):(S.mode==='ai'?'versus AI':S.mode==='hotseat'?'hotseat':''); });
   }
   function showError(title, text, retry){ $('#error-title').textContent=title; $('#error-text').textContent=text; $('#error-retry').classList.toggle('hidden',!retry); overlay('ov-error',true); }
   function handleMessage(type, p, env){
@@ -2768,7 +2780,7 @@ const UI = (function(){
     const r=await api('/api/games/'+code); if(!r.replay) throw new Error('No replay for that code yet');
     disconnect(); S.mode='net'; S.room=code; S.game=r.replay; Rules.ensure(S.game.players.host); Rules.ensure(S.game.players.guest);
     S.role=(S.admiral&&r.host===S.admiral.name)?'host':(S.admiral&&r.guest===S.admiral.name)?'guest':'host'; S.viewAs=S.role; S.gameOverHandled=true; S.gameOverSent=true; S.replayOnly=!(S.admiral&&(r.host===S.admiral.name||r.guest===S.admiral.name));
-    history.replaceState(null,'','?g='+code); hideBanner(); showOver(); $('#over-status').textContent='Game '+code+(r.nextCode?' · rematch: '+r.nextCode:'');
+    history.replaceState(null,'','?g='+code); showOver(); $('#over-status').textContent='Game '+code+(r.nextCode?' · rematch: '+r.nextCode:'');
   }
   async function showLeaderboard(){
     try{ const r=await api('/api/leaderboard'); showScreen('board');
@@ -2874,8 +2886,7 @@ const UI = (function(){
   function resetToLobby(fromRemote){
     // Rematch or a fresh peer: keep names/navies, rebuild the game.
     const l=S.lobby; const first=l.nextFirst; const g=newGame(S.room, S.mode); if(S.game&&S.game.options) g.options=Rules.normalizeOptions(S.game.options); g.players.host.name=l.hostName||g.players.host.name; g.players.guest.name=l.guestName||g.players.guest.name; g.players.host.navy=l.hostNavy; g.players.guest.navy=l.guestNavy; g.rematches=(S.game&&S.game.rematches||0)+1;
-    S.game=g; resetSessionState(); S.lobby.stage='lobby'; S.lobby.nextFirst=first; S.lobby.rematch=!!first; hideBanner();
-    Object.values(S.oceans).forEach(o=>{ if(o){ o.clearEffects(); o.shipFx={}; o.pegs=null; o.fleet=null; } });
+    S.game=g; resetSessionState(); S.lobby.stage='lobby'; S.lobby.nextFirst=first; S.lobby.rematch=!!first;     Object.values(S.oceans).forEach(o=>{ if(o){ o.clearEffects(); o.shipFx={}; o.pegs=null; o.fleet=null; } });
     showScreen('lobby'); renderLobby(); save(); void fromRemote;
   }
 
@@ -2948,7 +2959,7 @@ const UI = (function(){
   }
   function enterBattle(){
     battleOceans(); showScreen('battle'); S.oceans.own.resize(); S.oceans.enemy.resize(); S.oceans.own.clearEffects(); S.oceans.enemy.clearEffects(); S.oceans.own.shipFx={}; S.oceans.enemy.shipFx={};
-    if(S.mode==='hotseat') S.viewAs=S.game.current; S.target=null; S.selShip=firstMobileShip();
+    if(S.mode==='hotseat') S.viewAs=S.game.current; S.target=null; S.selShip=firstMobileShip(); S.moveSel=false; S.pendingMove=null; S.result=null; coachInit();
     renderLog(); refreshBattle(); setTab(S.game.phase==='fire'?'enemy':'own');
     const t=Rules.traitOf(S.game,me()); if(t&&S.traitShownFor!==S.room+me()){ S.traitShownFor=S.room+me(); toast(navy(S.game.players[me()].navy).name+' — '+t.name+': '+t.text+' Cost: '+t.cost,'',7000); }
     checkTurn();
@@ -2956,20 +2967,20 @@ const UI = (function(){
   function firstMobileShip(){ const f=S.game.players[me()].fleet||[]; const i=f.findIndex(s=>!s.sunk&&!s.crippled); return i<0?0:i; }
   function refreshBattle(){
     const g=S.game; const my=g.players[me()], op=g.players[them()]; const own=S.oceans.own, en=S.oceans.enemy;
-    own.fleet=my.fleet; own.navyId=my.navy||'us'; own.turn=g.turn; own.pegs=Rules.pegMap(op.shots); own.selected=(g.current===me()&&g.phase==='maneuver'&&!g.winner)?S.selShip:-1;
+    own.fleet=my.fleet; own.navyId=my.navy||'us'; own.turn=g.turn; own.pegs=Rules.pegMap(op.shots); 
     en.fleet=null; en.navyId=op.navy||'uk'; en.turn=g.turn; en.pegs=Rules.pegMap(my.shots); en.mines=my.mines||[]; en.sightings=my.sightings||[]; en.wakes=my.shots.filter(x=>x.weapon==='torpedo'&&x.lane).map(x=>({path:Rules.torpedoPath(x.lane), stopIndex:x.stopIndex, turn:x.turn})); own.wakes=(my.torpedoes||[]).map(x=>({path:Rules.torpedoPath(x.lane), stopIndex:x.stopIndex, turn:x.turn})); syncTargets();
-    $('#battle-code').textContent=S.room; $('#battle-turn').textContent='Turn '+g.turn; $('#battle-shots').textContent=my.shots.length+' shot'+(my.shots.length===1?'':'s');
+    $('#battle-code').textContent=S.room; $('#menu-code').textContent=S.room; $('#battle-shots').textContent=my.shots.length+' shot'+(my.shots.length===1?'':'s');
     const myT=Rules.traitOf(g,me()), opT=Rules.traitOf(g,them()); $('#own-label').textContent=(S.mode==='hotseat'?my.name:'Your')+' ocean · '+navy(own.navyId).name+(myT?' · '+myT.name:''); $('#enemy-label').textContent='Enemy waters · '+navy(en.navyId).name+(opT?' · '+opT.name:'');
     $('#own-badge').textContent=Rules.sunkCount(my.fleet||[])+'/5 lost'; const t=Rules.classTally(my.shots); $('#enemy-badge').textContent=Object.values(t).filter(x=>x.sunk).length+'/5 sunk';
-    renderDocks(); renderTally(t); renderWeapons(); renderActions(); renderConn(S.linkState,'');
+    renderDocks(); renderTally(t); checkWeapon(); renderActions(); renderConn(S.linkState,'');
   }
   function renderDocks(){
     const g=S.game; const my=g.players[me()], op=g.players[them()];
     const od=$('#ownDock'); od.innerHTML='';
-    (my.fleet||[]).forEach((s,i)=>{ const row=document.createElement('div'); const mob=Rules.mobility(s); row.className='dockship'+(S.selShip===i&&g.current===me()&&g.phase==='maneuver'?' selected':'')+(mob==='sunk'||mob==='crippled'?' disabled':''); const cv=document.createElement('canvas'); cv.width=200; cv.height=68; row.appendChild(cv);
+    (my.fleet||[]).forEach((s,i)=>{ const row=document.createElement('div'); const mob=Rules.mobility(s); row.className='dockship'+(S.moveSel&&S.selShip===i?' selected':'')+(mob==='sunk'||mob==='crippled'?' disabled':''); const cv=document.createElement('canvas'); cv.width=200; cv.height=68; row.appendChild(cv);
       const info=document.createElement('div'); info.innerHTML='<div class="dname">'+shipLabel(me(),s.cls)+'</div><div class="dcls">'+SHIP_CLASSES[s.cls].name+' · bow '+cellName(s.bow)+' '+s.heading+'</div>'; const secs=document.createElement('div'); secs.className='secs'; s.hits.forEach((h,k)=>{ const b=document.createElement('span'); b.className='sec'+(h?' hit':'')+(k===0?' bow':''); b.title=SHIP_CLASSES[s.cls].sections[k]; secs.appendChild(b); }); info.appendChild(secs); row.appendChild(info);
       const st=document.createElement('span'); st.className='mob '+mob; st.textContent={ok:'mobile',damaged:'damaged',crippled:'dead in water',sunk:'sunk'}[mob]; row.appendChild(st);
-      row.addEventListener('click',()=>{ if(g.current!==me()||g.phase!=='maneuver') return; S.selShip=i; $('#ship-select').value=String(i); Sfx.click(); refreshBattle(); });
+      row.addEventListener('click',()=>selectOwnShip(i));
       od.appendChild(row); drawDockShip(cv,s.cls,my.navy||'us',s); });
     const ed=$('#enemyDock'); ed.innerHTML=''; const tally=Rules.classTally(my.shots);
     CLASS_ORDER.forEach(cls=>{ const t=tally[cls]; const row=document.createElement('div'); row.className='dockship'+(t.sunk?' disabled':''); const cv=document.createElement('canvas'); cv.width=200; cv.height=68; row.appendChild(cv);
@@ -2979,53 +2990,36 @@ const UI = (function(){
   }
   function renderTally(t){ const el=$('#tally'); el.innerHTML=''; CLASS_ORDER.forEach(cls=>{ const d=document.createElement('div'); d.innerHTML='<b class="'+(t[cls].sunk?'done':'')+'">'+t[cls].hits+'/'+t[cls].total+'</b>'+SHIP_CLASSES[cls].icon+' '+SHIP_CLASSES[cls].name.split(' ')[0]; d.title=SHIP_CLASSES[cls].name+': hits landed / sections'; el.appendChild(d); }); }
   const FIRE_LABEL={shell:'FIRE',mg:'FIRE MG',mine:'LAY MINE',radar:'SWEEP',airstrike:'STRIKE',torpedo:'TORPEDO'}; const P0={x:0,y:0};
-  /* ---------- guided turn flow: prompts over the active ocean, drag-to-move, fire confirmation, replay last action ---------- */
-  function showPrompt(which, text, buttons){ const el=$('#'+which+'-prompt'); if(!el) return; el.innerHTML=''; const t=document.createElement('div'); t.className='ptext'; t.textContent=text; el.appendChild(t); const row=document.createElement('div'); row.className='row'; (buttons||[]).forEach(b=>{ const btn=document.createElement('button'); btn.className='small'+(b.primary?' primary':''); btn.textContent=b.label; btn.addEventListener('click',()=>{ Sfx.unlock(); b.onClick(); }); row.appendChild(btn); }); if(buttons&&buttons.length) el.appendChild(row); el.classList.add('show'); }
-  function hidePrompt(which){ const el=$('#'+which+'-prompt'); if(el) el.classList.remove('show'); }
-  function targetsComplete(){ if(S.weapon==='mg') return S.targets.length===Rules.weaponSpec(S.game,me(),'mg').bullets; return !!S.target; }
-  function flowState(){ const g=S.game; if(!g||g.stage!=='battle'||g.winner) return 'over'; if(g.current!==me()) return 'wait'; if(S.busy||S.pendingFire) return 'resolving'; if(S.pendingMove) return 'confirmMove'; if(g.phase==='maneuver'&&!S.dragHint) return g.bonusMove?'bonus':'ask'; if(g.phase==='maneuver') return 'drag'; return targetsComplete()?'confirmFire':'aim'; }
-  function fireQuestion(){
-    const w=S.weapon, g=S.game, fs=fireShip(); const nm=fs?shipLabel(me(),fs.cls):'';
-    if(w==='shell') return 'Fire a shell at '+cellName(S.target)+'?';
-    if(w==='mine') return 'Lay a mine at '+cellName(S.target)+'? (ends your turn)';
-    if(w==='mg') return 'Machine gun from '+nm+' at '+S.targets.map(cellName).join(', ')+'?';
-    if(w==='radar') return 'Radar sweep '+areaName(Rules.radarAreaFor(g,me(),fs.cls,S.target))+' with '+nm+'? (uses your shot)';
-    if(w==='torpedo') return 'Torpedo along '+Rules.laneName(laneFor(S.target))+'?';
-    if(w==='airstrike'){ const line=Rules.lineCells(S.target,S.airDir); return 'Air strike on '+cellName(line[0])+'–'+cellName(line[2])+' ('+(S.airDir?'horizontal':'vertical')+')?'; }
-    return 'Fire?';
+  /* ---------- turn flow: tap to select, tap again to confirm. The action tray under the map is the only control surface. ---------- */
+  const MOVE_VERB={advance:'Advance',reverse:'Reverse',rotcw:'Rotate ↻',rotccw:'Rotate ↺'};
+  function myTurnNow(){ const g=S.game; return !!g&&g.stage==='battle'&&!g.winner&&g.current===me(); }
+  function canMoveNow(){ return myTurnNow()&&S.game.phase==='maneuver'&&!S.busy&&!S.pendingFire; }
+  // Legal moves of the selected ship as tap handles on the map: ahead of the bow, astern of the stern, and beside the bow for the two rotations.
+  function moveHandles(){
+    if(!canMoveNow()||!S.moveSel) return []; const g=S.game; const ship=(g.players[me()].fleet||[])[S.selShip]; if(!ship||!ship.bow||ship.sunk) return [];
+    const h=DIR[ship.heading], right={x:-h.y,y:h.x}, bow=ship.bow; const out=[];
+    MOVE_TYPES.forEach(t=>{ const r=Rules.canMoveIn(g,me(),S.selShip,t); if(!r.ok) return;
+      const cell=t==='advance'?r.ship.bow:t==='reverse'?Rules.sternCell(r.ship):t==='rotcw'?{x:bow.x+right.x,y:bow.y+right.y}:{x:bow.x-right.x,y:bow.y-right.y};
+      const back=t==='reverse'; out.push({type:t, cell, ship:r.ship, ang:Math.atan2(back?-h.y:h.y, back?-h.x:h.x), active:!!(S.pendingMove&&S.pendingMove.type===t)}); });
+    return out;
   }
-  function fireButtons(){
-    const w=S.weapon; const btns=[{label:{shell:'Fire',mine:'Lay mine',mg:'Fire',radar:'Sweep',torpedo:'Fire',airstrike:'Strike'}[w]||'Fire', primary:true, onClick:()=>doFire()}];
-    if(w==='torpedo') btns.push({label:'Change direction', onClick:()=>{ S.torpDir=(S.torpDir+1)%4; syncTargets(); renderActions(); }});
-    if(w==='airstrike') btns.push({label:'Flip line', onClick:()=>{ S.airDir=!S.airDir; syncTargets(); renderActions(); }});
-    btns.push({label:'Cancel', onClick:()=>{ clearTargets(); renderActions(); }});
-    return btns;
+  function selectOwnShip(i){ S.selShip=i; S.moveSel=true; S.pendingMove=null; coachDone('move'); vib(8); Sfx.click(); if(S.tab!=='own') setTab('own'); else refreshBattle(); }
+  function tapOwn(cell){
+    const g=S.game; if(!g||g.winner) return; if(S.tab!=='own') setTab('own');
+    const hd=moveHandles().find(x=>x.cell.x===cell.x&&x.cell.y===cell.y);
+    if(hd){ if(hd.active){ confirmMove(); return; } S.pendingMove={idx:S.selShip, type:hd.type, ship:hd.ship}; vib(8); Sfx.click(); refreshBattle(); return; }
+    const idx=(g.players[me()].fleet||[]).findIndex(sh=>sh.bow&&Rules.sectionAt(sh,cell)>=0);
+    if(idx>=0){ selectOwnShip(idx); return; }
+    S.moveSel=false; S.pendingMove=null; refreshBattle();
   }
-  function renderFlow(){
-    if(S.screen!=='battle'||!S.game||!S.oceans.own) return; const st=flowState(); const my=S.game.players[me()];
-    hidePrompt('own'); hidePrompt('enemy'); $('#btn-replay-last').disabled=!S.lastAction||S.busy;
-    const replayBtn=S.lastAction?[{label:'↻ Replay last action', onClick:()=>replayLast()}]:[];
-    switch(st){
-      case 'ask': showPrompt('own','Maneuver a vessel?',[{label:'Yes — drag a ship',primary:true,onClick:()=>{ S.dragHint=true; renderFlow(); }},{label:'No, go fire',onClick:()=>declineManeuver()}]); break;
-      case 'bonus': showPrompt('own','Fleet exercise: move a second undamaged ship?',[{label:'Yes — drag a ship',primary:true,onClick:()=>{ S.dragHint=true; renderFlow(); }},{label:'No, go fire',onClick:()=>declineManeuver()}]); break;
-      case 'drag': showPrompt('own','Drag a ship along its length to advance or reverse, or swing its bow sideways to rotate about the stern. Illegal directions will not snap.',[{label:'Skip maneuver, go fire',onClick:()=>declineManeuver()}]); break;
-      case 'confirmMove': { const pm=S.pendingMove; const ship=my.fleet[pm.idx]; const rot=pm.type.startsWith('rot'); const verb={advance:'Advance',reverse:'Reverse',rotcw:'Rotate ↻',rotccw:'Rotate ↺'}[pm.type];
-        showPrompt('own', verb+' '+shipLabel(me(),ship.cls)+(rot?' about its stern at '+cellName(Rules.sternCell(ship))+'? This ends your turn — no shot.':' to bow '+cellName(pm.ship.bow)+'?'), [{label:'Confirm',primary:true,onClick:()=>confirmMove()},{label:'Go back',onClick:()=>cancelMove()}]); break; }
-      case 'aim': showPrompt('enemy', $('#target-label').textContent, replayBtn); break;
-      case 'confirmFire': showPrompt('enemy', fireQuestion(), fireButtons()); break;
-      case 'wait': showPrompt('own','Enemy turn — stand by. Their action plays here.', replayBtn); break;
-      default: break;
-    }
-  }
-  function declineManeuver(){ const g=S.game; if(g.phase==='maneuver'){ const r=Rules.skipManeuver(g,me()); if(r.ok){ S.game=r.game; save(); } } S.dragHint=false; Sfx.click(); refreshBattle(); setTab('enemy'); }
-  function confirmMove(){ const pm=S.pendingMove; if(!pm) return; S.pendingMove=null; const own=S.oceans.own; own.ghost=null; own.pivot=null; S.selShip=pm.idx; doManeuver(pm.type); }
-  function cancelMove(){ S.pendingMove=null; const own=S.oceans.own; own.ghost=null; own.pivot=null; Sfx.click(); renderActions(); }
+  function confirmMove(){ const pm=S.pendingMove; if(!pm) return; S.pendingMove=null; S.moveSel=false; S.selShip=pm.idx; if(pm.type.startsWith('rot')) coachDone('rotate'); vib(15); doManeuver(pm.type); }
+  function cancelMove(){ S.pendingMove=null; Sfx.click(); refreshBattle(); }
   function runAnim(ocean, fn){ S.lastAction={ocean, fn}; return Anim.run(fn); }
   async function replayLast(){ const la=S.lastAction; if(!la||S.busy) return; setTab(la.ocean); S.busy=true; renderActions(); await Anim.run(la.fn); S.busy=false; refreshBattle(); }
   const LANE_MODES=[{axis:'row',dir:1,label:'→ row'},{axis:'row',dir:-1,label:'← row'},{axis:'col',dir:1,label:'↓ column'},{axis:'col',dir:-1,label:'↑ column'}];
   function laneFor(cell){ const m=LANE_MODES[S.torpDir%4]; return {axis:m.axis, index:m.axis==='row'?cell.y:cell.x, dir:m.dir}; }
   function subStatus(){ const g=S.game; const sub=(g.players[me()].fleet||[])[Rules.SUB_IDX]; if(!sub||sub.sunk) return 'sub lost'; if(Rules.hitCount(sub)>0&&!Rules.weaponSpec(g,me(),'torpedo').damagedOk) return 'sub damaged'; if(g.current===me()&&((g.movedShips||[]).includes(Rules.SUB_IDX)||(g.maneuvered&&g.maneuveredShip===Rules.SUB_IDX))) return 'sub moved'; return null; }
-  function fireShip(){ const f=S.game.players[me()].fleet||[]; return S.weapon==='airstrike'?f[0]:f[S.selShip]; }
+  function fireShip(){ const f=S.game.players[me()].fleet||[]; return S.weapon==='airstrike'?f[0]:f[S.fireFrom]; }
   function areaName(a){ return cellName({x:a.x,y:a.y})+'–'+cellName({x:a.x+a.size-1,y:a.y+a.size-1}); }
   function syncTargets(){
     const en=S.oceans.enemy; if(!en) return; en.target=null; en.targets=[]; en.area=null; en.lane=null;
@@ -3036,7 +3030,7 @@ const UI = (function(){
     else en.target=S.target;
   }
   function clearTargets(){ S.target=null; S.targets=[]; syncTargets(); }
-  function selectWeapon(id){ Sfx.unlock(); if(!WEAPONS[id]) return; S.weapon=id; clearTargets(); if(id==='airstrike') S.selShip=0; Sfx.click(); renderWeapons(); renderActions(); if(isMobile()&&S.game.current===me()) setTab('enemy'); }
+  function selectWeapon(id){ Sfx.unlock(); if(!WEAPONS[id]) return; S.weapon=id; clearTargets(); checkWeapon(); vib(8); Sfx.click(); if(myTurnNow()&&S.tab!=='enemy') setTab('enemy'); else renderActions(); }
   const WEAPON_HELP={
     shell:{ how:'One shell at one cell. Results: Miss, Hit (class revealed, never the section or heading), Confirmed (that section was already burning), or Sunk (the full footprint is drawn).', down:'None. The enemy learns nothing about your fleet.', reload:'None — unlimited.', needs:'Nothing.' },
     mg:{ how:'Four bullets at any four cells, fired from a ship you pick. A ship takes ONE section of damage only if two or more bullets strike it. A lone bullet grazes: class revealed, no damage.', down:'The enemy sees exactly which ship fired and where it is (marked on their grid with the turn number).', reload:'10 of your turns.', needs:'Any ship still afloat, even a crippled one.', opt:'Fire from' },
@@ -3045,7 +3039,7 @@ const UI = (function(){
     radar:{ how:'One undamaged ship scans a square of enemy water. Every enemy section inside shows for five seconds, then vanishes; the log keeps only the count. Bigger ships scan bigger squares: Carrier 5×5, Battleship 4×4, Destroyer 3×3, Submarine 3×3, Patrol Boat 2×2.', down:'The enemy learns the scanning ship\'s exact position and heading. Uses your shot.', reload:'8 of your turns.', needs:'A ship with no damage at all.', opt:'Scan from' },
     airstrike:{ how:'Your Carrier launches a bombing run on three cells in a straight line, horizontal or vertical. Every bomb is a full shot, so one run can hit up to three sections.', down:'The enemy learns the Carrier\'s exact position.', reload:'Once per game.', needs:'An undamaged Carrier.', opt:'Bomb line' },
   };
-  const HAS_OPTIONS={mg:true, radar:true, torpedo:true, airstrike:true};
+  const HAS_OPTIONS={mg:true, radar:true}; // these ask which ship fires or scans; torpedo and air strike direction live in the tray
   let wmChoice=null;
   function openWeaponModal(id){
     Sfx.unlock(); const g=S.game; const p=g.players[me()]; Rules.ensure(p); const w=WEAPONS[id], h=WEAPON_HELP[id]; const st=Rules.weapon(p,id); const rd=Rules.weaponReady(g,me(),id);
@@ -3060,21 +3054,21 @@ const UI = (function(){
     const updateArm=()=>{ arm.disabled=!(myTurn && !blocker && (!HAS_OPTIONS[id] || wmChoice!=null)); };
     const fleet=p.fleet||[];
     const addOpt=(label, detail, tag, enabled, value)=>{ const d=document.createElement('button'); d.className='opt'+(enabled?'':' disabled'); d.innerHTML='<span>'+label+(detail?'<br><small>'+detail+'</small>':'')+'</span>'+(tag?'<span class="tag">'+tag+'</span>':''); d.disabled=!enabled; if(enabled){ anyEnabled=true; d.addEventListener('click',()=>{ wmChoice=value; opts.querySelectorAll('.opt').forEach(x=>x.classList.toggle('selected',x===d)); updateArm(); }); } opts.appendChild(d); return d; };
-    if(id==='mg'){ $('#wm-opt-title').textContent=h.opt; fleet.forEach((sh,i)=>{ const mob=Rules.mobility(sh); const d=addOpt(shipLabel(me(),sh.cls), SHIP_CLASSES[sh.cls].name+' · bow '+cellName(sh.bow)+' '+sh.heading, mob==='sunk'?'sunk':mob==='crippled'?'dead in water · can still fire':mob, mob!=='sunk', i); if(i===S.selShip&&mob!=='sunk'){ d.click(); } }); if(wmChoice==null){ const first=opts.querySelector('.opt:not(.disabled)'); if(first) first.click(); } }
-    else if(id==='radar'){ $('#wm-opt-title').textContent=h.opt; fleet.forEach((sh,i)=>{ const mob=Rules.mobility(sh); const n=Rules.radarAreaFor(g,me(),sh.cls,P0).size; const okShip=mob==='ok'; const d=addOpt(shipLabel(me(),sh.cls), SHIP_CLASSES[sh.cls].name+' · bow '+cellName(sh.bow)+' '+sh.heading+(okShip?'':' · '+(mob==='sunk'?'sunk':'damaged — radar needs an undamaged ship')), n+'×'+n+' square', okShip, i); if(i===S.selShip&&okShip) d.click(); }); if(wmChoice==null){ const first=opts.querySelector('.opt:not(.disabled)'); if(first) first.click(); } if(!anyEnabled) blocker=blocker||'No undamaged ship left to scan from'; }
-    else if(id==='torpedo'){ $('#wm-opt-title').textContent=h.opt; const ss=subStatus(); LANE_MODES.forEach((m,k)=>{ const d=addOpt(m.label.replace('→','West → East along a').replace('←','East → West along a').replace('↓','North → South along a').replace('↑','South → North along a'), 'then tap any cell of the '+m.axis+' you want', m.label.split(' ')[0], !ss, k); if(k===S.torpDir%4&&!ss) d.click(); }); if(ss) blocker=blocker||('Torpedo unavailable: '+ss); }
-    else if(id==='airstrike'){ $('#wm-opt-title').textContent=h.opt; const car=fleet[0]; const okCar=car&&!car.sunk&&Rules.hitCount(car)===0; [{v:true,l:'Horizontal ↔',d:'three cells across a row, starting where you tap'},{v:false,l:'Vertical ↕',d:'three cells down a column, starting where you tap'}].forEach(o=>{ const d=addOpt(o.l,o.d,'',okCar,o.v); if(o.v===S.airDir&&okCar) d.click(); }); if(!okCar) blocker=blocker||(car&&car.sunk?'Your Carrier is sunk':'Your Carrier is damaged — no flight operations'); }
-    else { $('#wm-opt-title').textContent=''; }
-    $('#wm-hint').textContent = !myTurn ? 'Not your turn — you can arm this when your turn comes.' : blocker ? blocker : (id==='shell'?'Arm, then tap one enemy cell and press FIRE.':id==='mine'?'Arm, then tap the cell to mine and press LAY MINE.':id==='mg'?'Arm, then tap four enemy cells and press FIRE MG.':id==='radar'?'Arm, then tap the top-left corner of the square and press SWEEP.':id==='torpedo'?'Arm, then tap any cell of the lane and press TORPEDO.':'Arm, then tap the first cell of the bomb line and press STRIKE.');
+    if(HAS_OPTIONS[id]){ $('#wm-opt-title').textContent=h.opt; shipChoices(id).forEach(c=>{ const d=addOpt(c.label, c.detail, c.tag, c.enabled, c.value); if(c.value===S.fireFrom&&c.enabled) d.click(); }); if(wmChoice==null){ const first=opts.querySelector('.opt:not(.disabled)'); if(first) first.click(); } if(!anyEnabled) blocker=blocker||(id==='radar'?'No undamaged ship left to scan from':'No ship afloat'); }
+    else { $('#wm-opt-title').textContent=''; const av=weaponAvailability(id); if(!av.ok&&!blocker) blocker=av.text; }
+    $('#wm-hint').textContent = !myTurn ? 'Not your turn — you can arm this when your turn comes.' : blocker ? blocker : ({shell:'Arm, then tap a square and tap it again to fire.', mine:'Arm, then tap the square to mine and tap it again.', mg:'Arm, then tap the squares and press FIRE.', radar:'Arm, then tap the top-left square of the area and tap it again.', torpedo:'Arm, then tap any square of the lane, pick the direction, and tap the square again.', airstrike:'Arm, then tap the first square of the bomb line, pick ↔ or ↕, and tap the square again.'})[id];
     updateArm(); overlay('ov-weapon',true);
   }
   function armWeapon(){
     const id=$('#wm-arm').dataset.weapon; overlay('ov-weapon',false); if(!id) return;
-    if(id==='mg'||id==='radar'){ if(wmChoice!=null) S.selShip=wmChoice; }
-    else if(id==='torpedo'){ if(wmChoice!=null) S.torpDir=wmChoice; }
-    else if(id==='airstrike'){ if(wmChoice!=null) S.airDir=wmChoice; }
-    S.weapon=id; clearTargets(); if(id==='airstrike') S.selShip=0; Sfx.confirm(); renderWeapons(); renderActions(); if(isMobile()&&S.game.current===me()) setTab('enemy');
-    toast($('#wm-hint').textContent.replace(/^Arm, then /,'Now '), '', 2600);
+    if(HAS_OPTIONS[id]&&wmChoice!=null) S.fireFrom=wmChoice;
+    const hint=$('#wm-hint').textContent.replace(/^Arm, then /,'Now '); Sfx.confirm(); selectWeapon(id); toast(hint,'',3200);
+  }
+  // Ships that can fire the machine gun or run the radar, with the reason when they cannot.
+  function shipChoices(id){
+    const g=S.game; return (g.players[me()].fleet||[]).map((sh,i)=>{ const mob=Rules.mobility(sh); const where=SHIP_CLASSES[sh.cls].name+' · bow '+cellName(sh.bow)+' '+sh.heading;
+      if(id==='radar'){ const n=Rules.radarAreaFor(g,me(),sh.cls,P0).size; const okShip=mob==='ok'; return {value:i, label:shipLabel(me(),sh.cls), detail:where+(okShip?'':' · '+(mob==='sunk'?'sunk':'damaged — radar needs an undamaged ship')), tag:n+'×'+n+' square', enabled:okShip}; }
+      return {value:i, label:shipLabel(me(),sh.cls), detail:where, tag:mob==='sunk'?'sunk':mob==='crippled'?'dead in water · can still fire':mob, enabled:mob!=='sunk'}; });
   }
   // Availability of a weapon for the current player: ready | reload (temporary) | blocked (this turn) | gone (vessel lost or damaged, permanent) | spent (no uses left)
   function weaponAvailability(id){
@@ -3087,41 +3081,100 @@ const UI = (function(){
     if(!rd.ok){ if(st.cooldown>0) return {ok:false, kind:'reload', text:'reload '+st.cooldown}; if(/no radar|Not in this game/.test(rd.reason)) return {ok:false, kind:'gone', text:rd.reason.replace(/^.*?: /,'')}; return {ok:false, kind:'blocked', text:rd.reason}; }
     return {ok:true, kind:'ready', text:id==='shell'?'unlimited':st.usesRemaining!=null?st.usesRemaining+' left':'ready'};
   }
-  function renderWeapons(){
-    const g=S.game; const p=g.players[me()]; Rules.ensure(p); const box=$('#weapons'); if(!box) return; box.innerHTML='';
+  // Keep the armed weapon usable: fall back to the shell, and keep a valid firing ship for the machine gun and radar.
+  function checkWeapon(){
     if(!weaponAvailability(S.weapon).ok) S.weapon='shell';
-    WEAPON_ORDER.filter(id=>Rules.weaponEnabled(g,id)).forEach(id=>{ const w=WEAPONS[id]; const av=weaponAvailability(id); const grp=document.createElement('span'); grp.className='wgroup'; const b=document.createElement('button'); b.className='wpn'+(S.weapon===id?' selected':'')+(av.kind==='gone'||av.kind==='spent'?' gone':'')+(av.kind==='reload'?' reloading':'');
-      b.innerHTML=w.short+'<small>'+av.text+'</small>'; b.disabled=!av.ok; b.setAttribute('aria-disabled',String(!av.ok)); b.setAttribute('aria-label',w.name+': '+av.text);
-      b.addEventListener('click',()=>{ if(HAS_OPTIONS[id]) openWeaponModal(id); else selectWeapon(id); });
-      const hb=document.createElement('button'); hb.className='help'; hb.textContent='?'; hb.setAttribute('aria-label','Explain '+w.name); hb.addEventListener('click',()=>openWeaponModal(id));
-      grp.appendChild(b); grp.appendChild(hb); box.appendChild(grp); });
-    const myT=Rules.traitOf(g,me()); $('#weapon-desc').textContent=WEAPONS[S.weapon].desc+(myT?'  ·  '+navy(p.navy).name+' ability — '+myT.name+': '+myT.text+' Cost: '+myT.cost:'');
+    if(HAS_OPTIONS[S.weapon]){ const ch=shipChoices(S.weapon); if(!ch[S.fireFrom]||!ch[S.fireFrom].enabled){ const ok=ch.find(c=>c.enabled); if(ok) S.fireFrom=ok.value; else S.weapon='shell'; } }
+  }
+  // What the armed weapon still needs and whether the aim is complete. Shared by the tray, tap-again-to-fire and the Enter key.
+  function aimInfo(){
+    const g=S.game, w=S.weapon, fs=fireShip(); const from=fs?SHIP_CLASSES[fs.cls].name:'';
+    if(w==='shell') return S.target?{ready:true, big:cellName(S.target), sub:'Shell · tap the square again or press FIRE'}:{ready:false, big:'Shell', sub:'Tap a square to aim'};
+    if(w==='mine') return S.target?{ready:true, big:'Mine at '+cellName(S.target), sub:'Tap it again or press LAY MINE · ends your turn'}:{ready:false, big:'Mine', sub:'Tap the square to mine'};
+    if(w==='mg'){ const nb=Rules.weaponSpec(g,me(),'mg').bullets, n=S.targets.length; return {ready:n===nb, big:n?S.targets.map(cellName).join(' '):'Machine gun', sub:'Bullets '+n+'/'+nb+' from '+from+(n===nb?' · press FIRE MG':' · tap squares; tap one again to remove it')}; }
+    if(w==='radar'){ const okShip=fs&&fs.bow&&!fs.sunk&&Rules.hitCount(fs)===0; if(!okShip) return {ready:false, big:'Radar', sub:'Pick an undamaged ship in the weapon list'}; const sz=Rules.radarAreaFor(g,me(),fs.cls,P0).size;
+      return S.target?{ready:true, big:'Sweep '+areaName(Rules.radarAreaFor(g,me(),fs.cls,S.target)), sub:from+' '+sz+'×'+sz+' · tap again or press SWEEP · reveals that ship'}:{ready:false, big:'Radar '+sz+'×'+sz, sub:'From '+from+' · tap the top-left square of the area'}; }
+    if(w==='airstrike'){ if(!S.target) return {ready:false, big:'Air strike', sub:'Tap the first square of the bomb line'}; const line=Rules.lineCells(S.target,S.airDir); return {ready:true, big:cellName(line[0])+'–'+cellName(line[2]), sub:'Three bombs · pick ↔ or ↕ · tap again or press STRIKE'}; }
+    if(w==='torpedo'){ const ss=subStatus(); if(ss) return {ready:false, big:'Torpedo', sub:'Unavailable: '+ss}; return S.target?{ready:true, big:Rules.laneName(laneFor(S.target)), sub:'Pick the direction · tap again or press TORPEDO'}:{ready:false, big:'Torpedo', sub:'Tap any square in the row or column'}; }
+    return {ready:false, big:'', sub:''};
+  }
+  function trayButton(label, cls, onClick, id){ const b=document.createElement('button'); b.className=cls||''; b.textContent=label; if(id) b.id=id; b.addEventListener('click',()=>{ Sfx.unlock(); onClick(); }); return b; }
+  // Five glanceable ship markers along the top of the tray: your fleet on your ocean, what you know of theirs on enemy waters.
+  function renderFleetPips(){
+    const g=S.game, box=$('#tray-fleet'); box.innerHTML='';
+    if(S.tab==='own'){ (g.players[me()].fleet||[]).forEach((sh,i)=>{ const mob=Rules.mobility(sh); const b=document.createElement('button'); b.className='pip '+mob+(S.moveSel&&S.selShip===i?' selected':''); b.setAttribute('aria-label',SHIP_CLASSES[sh.cls].name+': '+mob); b.innerHTML='<b>'+SHIP_CLASSES[sh.cls].icon+'</b><span class="dots">'+sh.hits.map(h=>'<i class="'+(h?'hit':'')+'"></i>').join('')+'</span>'; b.addEventListener('click',()=>selectOwnShip(i)); box.appendChild(b); }); }
+    else { const t=Rules.classTally(g.players[me()].shots); CLASS_ORDER.forEach(cls=>{ const x=t[cls]; const d=document.createElement('div'); d.className='pip '+(x.sunk?'sunk':x.crippled?'crippled':x.hits?'damaged':'ok'); let dots=''; for(let k=0;k<x.total;k++) dots+='<i class="'+(k<x.hits?'hit':'')+'"></i>'; d.innerHTML='<b>'+SHIP_CLASSES[cls].icon+'</b><span class="dots">'+dots+'</span>'; d.setAttribute('aria-label',SHIP_CLASSES[cls].name+': '+x.hits+' of '+x.total+' hit'+(x.sunk?', sunk':'')); box.appendChild(d); }); }
   }
   function renderActions(){
-    const g=S.game; const my=g.players[me()]; const myTurn=g.current===me()&&!g.winner&&g.stage==='battle'; const man=myTurn&&g.phase==='maneuver'&&!S.busy; const fire=myTurn&&!S.busy&&!S.pendingFire;
-    const w=S.weapon; const pickShip=fire&&(w==='mg'||w==='radar');
-    const sel=$('#ship-select'); const cur=String(S.selShip); sel.innerHTML='';
-    (my.fleet||[]).forEach((sh,i)=>{ const o=document.createElement('option'); o.value=String(i); const mob=Rules.mobility(sh); o.textContent=SHIP_CLASSES[sh.cls].name+(mob==='ok'?'':' ('+mob+')');
-      o.disabled= pickShip ? (mob==='sunk' || (w==='radar'&&mob!=='ok')) : (mob==='sunk'||mob==='crippled'); sel.appendChild(o); });
-    sel.value=cur; sel.disabled=!(man||pickShip);
-    const ship=(my.fleet||[])[S.selShip];
-    ['advance','reverse','rotcw','rotccw'].forEach(t=>{ const b=$('#btn-'+t); b.disabled=!man||!ship||!Rules.canMoveIn(g,me(),S.selShip,t).ok; if(ship&&man){ const r=Rules.canMoveIn(g,me(),S.selShip,t); if(!r.ok) b.title=r.reason; } });
-    $('#btn-skip').disabled=!man;
-    $('#btn-airdir').classList.toggle('hidden',w!=='airstrike'); $('#btn-airdir').textContent=S.airDir?'Line: ↔ horizontal':'Line: ↕ vertical';
-    $('#btn-torpdir').classList.toggle('hidden',w!=='torpedo'); $('#btn-torpdir').textContent='Lane: '+LANE_MODES[S.torpDir%4].label;
-    let ready=false, label='';
-    const fs=fireShip();
-    if(w==='shell'){ ready=!!S.target; label=S.target?'Target '+cellName(S.target):'Tap an enemy cell'; }
-    else if(w==='mine'){ ready=!!S.target; label=S.target?'Mine at '+cellName(S.target):'Tap a cell to mine'; }
-    else if(w==='mg'){ const nb=Rules.weaponSpec(g,me(),'mg').bullets; ready=S.targets.length===nb; label='Bullets '+S.targets.length+'/'+nb+(fs?' from '+SHIP_CLASSES[fs.cls].name:'')+(ready?'':' — tap cells'); }
-    else if(w==='radar'){ const okShip=fs&&fs.bow&&!fs.sunk&&Rules.hitCount(fs)===0; ready=!!S.target&&okShip; const rsz=fs?Rules.radarAreaFor(g,me(),fs.cls,P0).size:0; label=!okShip?'Pick an undamaged ship':(S.target?'Sweep '+areaName(Rules.radarAreaFor(g,me(),fs.cls,S.target))+' ('+SHIP_CLASSES[fs.cls].name+' '+rsz+'×'+rsz+')':'Tap the corner of the '+rsz+'×'+rsz+' square'); }
-    else if(w==='airstrike'){ ready=!!S.target; const line=S.target?Rules.lineCells(S.target,S.airDir):null; label=line?'Bombs '+cellName(line[0])+'–'+cellName(line[2])+(S.airDir?' (horizontal)':' (vertical)')+' — tap again to flip':'Tap the first cell of the bomb line; the Line button or a second tap flips ↔/↕'; }
-    else if(w==='torpedo'){ const ss=subStatus(); ready=!!S.target&&!ss; label=ss?('Torpedo unavailable: '+ss):(S.target?'Torpedo along '+Rules.laneName(laneFor(S.target))+' — tap again to change direction':'Tap any cell in the lane; the Lane button or a second tap changes direction'); }
-    if(!myTurn) label='Waiting…';
-    $('#btn-fire').textContent=FIRE_LABEL[w]; $('#btn-fire').disabled=!(fire&&ready&&Rules.weaponReady(g,me(),w).ok); $('#target-label').textContent=label;
-    $('#phase-label').textContent=g.winner?'Battle over':!myTurn?'Enemy turn — '+(S.pendingFire?'waiting for the enemy report…':'waiting'):g.bonusMove?'Fleet exercise: move a second undamaged ship (advance or reverse), or fire now.':g.phase==='maneuver'?'Your turn · Maneuver (optional): Advance/Reverse then fire, or Rotate (pivots on the stern, ends the turn). Hover a button to preview.':'Your turn · Fire phase — choose a weapon and a target on the enemy grid';
-    $('#btn-surrender').disabled=!!g.winner;
-    renderFlow();
+    if(!S.game||!S.oceans.own||S.game.stage==='lobby'||S.game.stage==='placement') return; const g=S.game, my=g.players[me()], own=S.oceans.own; const mine=myTurnNow();
+    const hs=moveHandles(); own.handles=hs; own.selected=S.moveSel?S.selShip:-1;
+    if(S.pendingMove){ own.ghost=S.pendingMove.ship; own.ghostOk=true; own.pivot=S.pendingMove.type.startsWith('rot')?Rules.sternCell(my.fleet[S.pendingMove.idx]):null; } else { own.ghost=null; own.pivot=null; }
+    const who=S.mode==='hotseat'?g.players[g.current].name+' · ':''; const status=g.winner?'Battle over':'Turn '+g.turn+' · '+who+(mine?(g.phase==='maneuver'?'your turn':'your attack'):'enemy turn');
+    $$('.turn-status').forEach(el=>{ el.textContent=status; });
+    $('#tab-own').textContent=mine?(g.phase==='maneuver'?'① Move':'① Moved ✓'):'Your ocean'; $('#tab-enemy').textContent=mine?'② Attack':'Enemy waters';
+    $('#btn-surrender').disabled=!!g.winner; $('#m-surrender').disabled=!!g.winner;
+    renderFleetPips(); renderResult(); renderCoach();
+    const big=$('#tray-big'), sub=$('#tray-sub'), btns=$('#tray-btns'); btns.innerHTML=''; const set=(b,t)=>{ big.textContent=b; sub.textContent=t; };
+    if(g.winner) set('Battle over','');
+    else if(S.busy) set('…','Tap the map to skip the animation');
+    else if(!mine) set('Enemy turn','Their action plays on your ocean.');
+    else if(S.pendingFire) set('Shot away…','Waiting for the enemy report.');
+    else if(S.tab==='own'){
+      if(g.phase!=='maneuver'){ set('Move done','Now attack.'); btns.appendChild(trayButton('② Attack →','primary',()=>setTab('enemy'),'tray-skip')); }
+      else if(S.pendingMove){ const pm=S.pendingMove, ship=my.fleet[pm.idx], rot=pm.type.startsWith('rot');
+        set(MOVE_VERB[pm.type]+' '+SHIP_CLASSES[ship.cls].name, rot?'Pivots on the stern at '+cellName(Rules.sternCell(ship))+' · ENDS YOUR TURN, no shot':'Bow to '+cellName(pm.ship.bow)+' · you still fire this turn');
+        btns.appendChild(trayButton('Confirm','primary',confirmMove,'tray-confirm')); btns.appendChild(trayButton('Cancel','',cancelMove,'tray-cancel')); }
+      else if(S.moveSel){ const ship=my.fleet[S.selShip], mob=Rules.mobility(ship);
+        set(shipLabel(me(),ship.cls), hs.length?'Tap an arrow on the map · curved arrows rotate and end your turn':(mob==='sunk'?'Sunk.':mob==='crippled'?'Dead in the water — cannot move.':'No legal move from here.'));
+        btns.appendChild(trayButton('② Attack →','',()=>setTab('enemy'),'tray-skip')); }
+      else { set(g.bonusMove?'Move a second ship?':'Move a ship?', g.bonusMove?'Fleet exercise: one more undamaged ship may advance or reverse.':'Tap a ship to see where it can go · optional'); btns.appendChild(trayButton('Skip → ② Attack','primary',()=>setTab('enemy'),'tray-skip')); }
+    } else {
+      const a=aimInfo(); set(a.big,a.sub); const av=weaponAvailability(S.weapon);
+      btns.appendChild(trayButton(WEAPONS[S.weapon].short+' ▾','chip',openWeaponSheet,'tray-weapon'));
+      if(S.weapon==='airstrike'&&S.target) [[true,'↔'],[false,'↕']].forEach(([v,l])=>{ const c=trayButton(l,'chip line-chip'+(S.airDir===v?' selected':''),()=>{ S.airDir=v; syncTargets(); renderActions(); }); c.dataset.h=v?'1':'0'; btns.appendChild(c); });
+      if(S.weapon==='torpedo'&&S.target) LANE_MODES.forEach((m,k)=>{ const c=trayButton(m.label.split(' ')[0],'chip lane-chip'+(S.torpDir%4===k?' selected':''),()=>{ S.torpDir=k; syncTargets(); renderActions(); }); c.dataset.dir=String(k); btns.appendChild(c); });
+      if(S.target||S.targets.length) btns.appendChild(trayButton('✕','chip',()=>{ clearTargets(); renderActions(); },'tray-clear'));
+      const fb=trayButton(FIRE_LABEL[S.weapon],'fire',()=>doFire(),'tray-fire'); fb.disabled=!(a.ready&&av.ok); btns.appendChild(fb);
+    }
+    syncTrayHeight();
+  }
+  // Weapon list as a bottom sheet: status, one line on what it does, and the ship choice inline for the machine gun and radar.
+  function openWeaponSheet(){
+    const g=S.game, box=$('#wsheet'); box.innerHTML=''; const usable=myTurnNow()&&!S.busy&&!S.pendingFire;
+    WEAPON_ORDER.filter(id=>Rules.weaponEnabled(g,id)).forEach(id=>{ const w=WEAPONS[id], av=weaponAvailability(id); const wrap=document.createElement('div'); wrap.className='wrow'; wrap.dataset.weapon=id;
+      const line=document.createElement('div'); line.className='wline'; const row=document.createElement('button'); row.className='opt wsheet-row'+(S.weapon===id?' selected':'')+(av.ok?'':' disabled'); row.disabled=!av.ok||!usable;
+      row.innerHTML='<span>'+w.name+'<br><small>'+WEAPON_HELP[id].how.split('. ')[0]+'.</small></span><span class="tag'+(av.kind==='gone'||av.kind==='spent'?' gone':'')+'">'+(av.kind==='gone'||av.kind==='spent'?'⊘ ':'')+av.text+'</span>';
+      const info=document.createElement('button'); info.className='help'; info.textContent='?'; info.setAttribute('aria-label','Explain '+w.name); info.addEventListener('click',()=>{ overlay('ov-weapons',false); openWeaponModal(id); });
+      row.addEventListener('click',()=>{ Sfx.unlock(); if(!HAS_OPTIONS[id]){ overlay('ov-weapons',false); selectWeapon(id); return; }
+        const open=wrap.querySelector('.wopts'); box.querySelectorAll('.wopts').forEach(x=>x.remove()); if(open) return; const opts=document.createElement('div'); opts.className='wopts optlist';
+        const title=document.createElement('div'); title.className='sub'; title.textContent=id==='radar'?'Scan from which ship? Bigger ships scan bigger squares. The enemy learns where that ship is.':'Fire from which ship? The enemy learns where that ship is.'; opts.appendChild(title);
+        shipChoices(id).forEach(c=>{ const o=document.createElement('button'); o.className='opt wsheet-opt'+(c.enabled?'':' disabled'); o.disabled=!c.enabled; o.innerHTML='<span>'+c.label+'<br><small>'+c.detail+'</small></span><span class="tag">'+c.tag+'</span>'; o.addEventListener('click',()=>{ S.fireFrom=c.value; overlay('ov-weapons',false); selectWeapon(id); }); opts.appendChild(o); });
+        wrap.appendChild(opts); });
+      line.appendChild(row); line.appendChild(info); wrap.appendChild(line); box.appendChild(wrap); });
+    overlay('ov-weapons',true);
+  }
+  /* ---------- one-time coach marks (per Admiral, stored on the server; per device when signed out) ---------- */
+  const COACH_VERSION=2, COACH_STEPS=['move','rotate','attack'];
+  const COACH_TEXT={ move:'New controls: tap one of your ships and arrows show every legal move. Tap an arrow, then tap it again (or Confirm). Moving is optional.', rotate:'Curved arrows swing the bow around the stern. A rotation ends your turn — you do not fire.', attack:'To fire: tap a square, then tap the same square again (or press FIRE). The weapon button opens your other weapons.' };
+  function coachKey(){ return 'underway:coach:'+(S.admiral?S.admiral.name.toLowerCase():'_local'); }
+  function coachLocal(){ try{ return JSON.parse(localStorage.getItem(coachKey())||'null')||{v:0}; }catch(e){ return {v:0}; } }
+  async function coachInit(){
+    const loc=coachLocal(); let done=loc.v>=COACH_VERSION;
+    if(S.admiral&&serverBase()){ try{ const r=await api('/api/me?token='+encodeURIComponent(S.admiral.token)); done=(r.coach||0)>=COACH_VERSION; }catch(e){} }
+    S.coach={needed:!done, seen:(!done&&loc.p===COACH_VERSION&&loc.seen)||{}}; renderActions();
+  }
+  function coachDone(step){
+    const c=S.coach; if(!c||!c.needed||c.seen[step]) return; c.seen[step]=true; const all=COACH_STEPS.every(k=>c.seen[k]);
+    try{ localStorage.setItem(coachKey(), JSON.stringify(all?{v:COACH_VERSION}:{v:0,p:COACH_VERSION,seen:c.seen})); }catch(e){}
+    if(all){ c.needed=false; if(S.admiral&&serverBase()) api('/api/admiral/coach','POST',{token:S.admiral.token, version:COACH_VERSION}).catch(()=>{}); }
+  }
+  function coachReset(){ S.coach={needed:true, seen:{}}; try{ localStorage.removeItem(coachKey()); }catch(e){} if(S.admiral&&serverBase()) api('/api/admiral/coach','POST',{token:S.admiral.token, version:0}).catch(()=>{}); renderActions(); }
+  function renderCoach(){
+    const c=S.coach; let step=null;
+    if(c&&c.needed&&myTurnNow()&&!S.busy&&!S.pendingFire){ const g=S.game;
+      if(S.tab==='own'&&g.phase==='maneuver'){ if(!c.seen.move) step='move'; else if(!c.seen.rotate&&(S.oceans.own.handles||[]).some(h=>h.type.startsWith('rot'))) step='rotate'; }
+      else if(S.tab==='enemy'&&!c.seen.attack) step='attack'; }
+    S.coachStep=step; $('#tray-coach').classList.toggle('hidden',!step); if(step) $('#coach-text').textContent=COACH_TEXT[step];
   }
   function shortRes(s){ const cn=s.cls?SHIP_CLASSES[s.cls].name:''; return {miss:'miss',hit:'HIT '+cn+(s.crippled?' (crippled)':''),confirmed:(s.moved?'burning '+cn+' — MOVED here':'confirmed '+cn+' still here'),sunk:'SUNK '+cn,graze:'grazed '+cn}[s.result]||s.result; }
   function renderLog(){
@@ -3142,7 +3195,7 @@ const UI = (function(){
     }
     while(ci<chats.length){ appendLog('sys chat','['+chats[ci].navy+'] '+chats[ci].text); ci++; }
   }
-  function setTab(t){ S.tab=t; $('#tab-own').classList.toggle('active',t==='own'); $('#tab-enemy').classList.toggle('active',t==='enemy'); $('#side-own').classList.toggle('inactive',t!=='own'); $('#side-enemy').classList.toggle('inactive',t!=='enemy'); S.oceans.own.resize(); S.oceans.enemy.resize(); }
+  function setTab(t){ S.tab=t; $('#tab-own').classList.toggle('active',t==='own'); $('#tab-enemy').classList.toggle('active',t==='enemy'); $('#side-own').classList.toggle('inactive',t!=='own'); $('#side-enemy').classList.toggle('inactive',t!=='enemy'); S.oceans.own.resize(); S.oceans.enemy.resize(); renderActions(); }
   function bindBattleCanvases(){
     const en=S.oceans.enemy, own=S.oceans.own; const tip=$('#peg-tip'); let pressTimer=0;
     const showTip=(cell, x, y)=>{ const e=en.pegs&&en.pegs.get(cellKey(cell)); if(!e||!e.history.length){ tip.style.display='none'; return; } tip.innerHTML='<b>'+cellName(cell)+'</b><br>'+e.history.map(s=>'Turn '+s.turn+': '+Rules.resultText(s)).join('<br>')+(e.stale?'<br><i>stale — ship has since moved</i>':''); tip.style.display='block'; tip.style.left=Math.min(window.innerWidth-250,x+12)+'px'; tip.style.top=(y+12)+'px'; };
@@ -3153,61 +3206,44 @@ const UI = (function(){
     en.canvas.addEventListener('pointerdown',e=>{ Sfx.unlock(); const cell=en.cellAt(e.clientX,e.clientY); if(!cell) return; clearTimeout(pressTimer); if(e.pointerType!=='mouse'){ pressTimer=setTimeout(()=>{ showTip(cell,e.clientX,e.clientY); pressTimer=0; },450); } });
     en.canvas.addEventListener('pointerup',e=>{ const cell=en.cellAt(e.clientX,e.clientY); if(pressTimer){ clearTimeout(pressTimer); pressTimer=0; if(cell) selectTarget(cell); } else if(e.pointerType==='mouse' && cell) selectTarget(cell); else if(e.pointerType!=='mouse'){ setTimeout(()=>{ tip.style.display='none'; },1200); } });
     en.canvas.addEventListener('pointercancel',()=>{ clearTimeout(pressTimer); pressTimer=0; });
-    own.canvas.addEventListener('pointermove',e=>{ own.hover=own.cellAt(e.clientX,e.clientY); });
-    own.canvas.addEventListener('pointerleave',()=>{ own.hover=null; });
-    // Drag-to-move: along the ship's length = advance/reverse, sideways = rotate about the stern. Snaps only to legal results; release asks for confirmation.
-    let drag=null;
-    own.canvas.addEventListener('pointerdown',e=>{ Sfx.unlock(); if(Anim.busy()){ Anim.skip(); return; } const cell=own.cellAt(e.clientX,e.clientY); if(!cell) return; const g=S.game; if(g.current!==me()||g.phase!=='maneuver'||S.busy||S.pendingMove||g.winner) return;
-      const f=g.players[me()].fleet; const idx=f.findIndex(sh=>sh.bow&&Rules.sectionAt(sh,cell)>=0); if(idx<0) return; S.selShip=idx; try{ own.canvas.setPointerCapture(e.pointerId); }catch(err){}
-      const cands={}; MOVE_TYPES.forEach(t=>{ cands[t]=Rules.canMoveIn(g,me(),idx,t); }); drag={idx, x0:e.clientX, y0:e.clientY, cands, type:null, moved:false}; renderActions(); });
-    own.canvas.addEventListener('pointermove',e=>{ own.hover=own.cellAt(e.clientX,e.clientY); if(!drag) return; const r=own.canvas.getBoundingClientRect(); const k=own.w/r.width; const dx=(e.clientX-drag.x0)*k, dy=(e.clientY-drag.y0)*k; const c=own.cell;
-      if(Math.hypot(dx,dy)<c*0.35){ drag.type=null; own.ghost=null; own.pivot=null; return; } drag.moved=true; const ship=S.game.players[me()].fleet[drag.idx]; const h=DIR[ship.heading]; const along=dx*h.x+dy*h.y; const right=dx*(-h.y)+dy*h.x;
-      const type=Math.abs(along)>=Math.abs(right)?(along>0?'advance':'reverse'):(right>0?'rotcw':'rotccw'); drag.type=type; const cand=drag.cands[type]; own.ghost=cand.ok?cand.ship:Rules.movedShip(ship,type); own.ghostOk=cand.ok; own.pivot=type.startsWith('rot')?Rules.sternCell(ship):null; drag.reason=cand.ok?null:cand.reason;
-      $('#phase-label').textContent=cand.ok?(MOVE_LABEL[type]+' — release to confirm'):(MOVE_LABEL[type]+' — illegal: '+cand.reason); });
-    const endDrag=e=>{ if(!drag) return; const d=drag; drag=null; own.hover=null;
-      if(!d.moved){ own.ghost=null; own.pivot=null; Sfx.click(); refreshBattle(); return; }
-      if(d.type&&d.cands[d.type].ok){ const ship=S.game.players[me()].fleet[d.idx]; S.pendingMove={idx:d.idx, type:d.type, ship:d.cands[d.type].ship}; own.ghost=d.cands[d.type].ship; own.ghostOk=true; own.pivot=d.type.startsWith('rot')?Rules.sternCell(ship):null; Sfx.confirm(); renderActions(); }
-      else { if(d.type){ Sfx.buzz(); toast(d.reason||'Illegal move','err',1600); } own.ghost=null; own.pivot=null; renderActions(); } };
-    own.canvas.addEventListener('pointerup',endDrag); own.canvas.addEventListener('pointercancel',()=>{ drag=null; own.ghost=null; own.pivot=null; });
+    // Own ocean: tap a ship to select it, tap a move handle to preview, tap it again to confirm. With a mouse, hovering a handle previews it.
+    let ownDown=null;
+    own.canvas.addEventListener('pointermove',e=>{ const cell=own.cellAt(e.clientX,e.clientY); own.hover=cell; if(e.pointerType!=='mouse'||S.pendingMove) return; const hd=cell&&(own.handles||[]).find(x=>x.cell.x===cell.x&&x.cell.y===cell.y); own.ghost=hd?hd.ship:null; own.ghostOk=true; own.pivot=hd&&hd.type.startsWith('rot')?Rules.sternCell(S.game.players[me()].fleet[S.selShip]):null; });
+    own.canvas.addEventListener('pointerleave',()=>{ own.hover=null; if(!S.pendingMove){ own.ghost=null; own.pivot=null; } });
+    own.canvas.addEventListener('pointerdown',e=>{ Sfx.unlock(); if(Anim.busy()){ Anim.skip(); ownDown=null; return; } ownDown=own.cellAt(e.clientX,e.clientY); });
+    own.canvas.addEventListener('pointerup',e=>{ const cell=own.cellAt(e.clientX,e.clientY), d=ownDown; ownDown=null; if(cell&&d&&d.x===cell.x&&d.y===cell.y) tapOwn(cell); });
+    own.canvas.addEventListener('pointercancel',()=>{ ownDown=null; });
     // tap anywhere on the enemy canvas during an animation skips it
     en.canvas.addEventListener('pointerdown',()=>{ if(Anim.busy()) Anim.skip(); });
   }
+  // Enemy waters: tap a square to aim, tap the same square again to fire. The machine gun collects its squares and fires from the tray.
   function selectTarget(cell){
-    const g=S.game; if(g.current!==me()||g.winner||S.busy||S.pendingFire) return;
-    if(S.weapon==='mg'){ const nb=Rules.weaponSpec(g,me(),'mg').bullets; const k=cellKey(cell); const i=S.targets.findIndex(c=>cellKey(c)===k); if(i>=0) S.targets.splice(i,1); else { if(S.targets.length>=nb){ Sfx.buzz(); toast(nb+' bullets only — tap a numbered cell to remove it.','err',1600); return; } S.targets.push(cell); } }
-    else if(S.target&&S.target.x===cell.x&&S.target.y===cell.y&&S.weapon==='airstrike'){ S.airDir=!S.airDir; }
-    else if(S.target&&S.target.x===cell.x&&S.target.y===cell.y&&S.weapon==='torpedo'){ S.torpDir=(S.torpDir+1)%4; }
-    else S.target=(S.target&&S.target.x===cell.x&&S.target.y===cell.y&&S.weapon!=='shell')?null:cell;
-    Sfx.click(); syncTargets(); renderActions();
+    const g=S.game; if(S.tab!=='enemy') setTab('enemy'); if(!myTurnNow()||S.busy||S.pendingFire) return;
+    const now=Date.now(), same=S.target&&S.target.x===cell.x&&S.target.y===cell.y;
+    if(S.weapon==='mg'){ const nb=Rules.weaponSpec(g,me(),'mg').bullets; const k=cellKey(cell); const i=S.targets.findIndex(c=>cellKey(c)===k); if(i>=0) S.targets.splice(i,1); else { if(S.targets.length>=nb){ Sfx.buzz(); toast(nb+' bullets only — tap a numbered square to remove it.','err',1800); return; } S.targets.push(cell); } }
+    else if(same){ if(now-S.targetAt<350) return; if(aimInfo().ready&&weaponAvailability(S.weapon).ok) doFire(); return; }
+    else { S.target=cell; S.targetAt=now; }
+    vib(8); Sfx.click(); syncTargets(); renderActions();
   }
   function bindBattle(){
-    $('#tab-own').addEventListener('click',()=>setTab('own')); $('#tab-enemy').addEventListener('click',()=>setTab('enemy'));
-    $('#btn-drawer').addEventListener('click',()=>{ const sc=$('#screen-battle'); sc.classList.toggle('drawer-open'); $('#btn-drawer').textContent=sc.classList.contains('drawer-open')?'Fleet, tally & log ▴':'Fleet, tally & log ▾'; Object.values(S.oceans).forEach(o=>o&&o.resize()); });
+    $('#tab-own').addEventListener('click',()=>{ Sfx.unlock(); setTab('own'); }); $('#tab-enemy').addEventListener('click',()=>{ Sfx.unlock(); setTab('enemy'); });
     $('#btn-replay-last').addEventListener('click',()=>{ Sfx.unlock(); replayLast(); });
-    $('#ship-select').addEventListener('change',e=>{ S.selShip=parseInt(e.target.value,10)||0; refreshBattle(); });
-    ['advance','reverse','rotcw','rotccw'].forEach(t=>{ const b=$('#btn-'+t); b.addEventListener('click',()=>{ clearPreview(); doManeuver(t); }); b.addEventListener('mouseenter',()=>previewMove(t)); b.addEventListener('focus',()=>previewMove(t)); b.addEventListener('mouseleave',clearPreview); b.addEventListener('blur',clearPreview); });
-    $('#btn-skip').addEventListener('click',()=>{ Sfx.unlock(); const r=Rules.skipManeuver(S.game,me()); if(!r.ok){ toast(r.reason,'err'); return; } S.game=r.game; Sfx.click(); save(); refreshBattle(); setTab('enemy'); });
-    $('#btn-fire').addEventListener('click',()=>doFire());
-    $('#wm-cancel').addEventListener('click',()=>overlay('ov-weapon',false)); $('#wm-arm').addEventListener('click',armWeapon);
-    $('#btn-airdir').addEventListener('click',()=>{ S.airDir=!S.airDir; Sfx.click(); syncTargets(); renderActions(); });
-    $('#btn-torpdir').addEventListener('click',()=>{ S.torpDir=(S.torpDir+1)%4; Sfx.click(); syncTargets(); renderActions(); });
+    $('#result-ok').addEventListener('click',()=>{ S.result=null; renderResult(); });
+    $('#coach-ok').addEventListener('click',()=>{ if(S.coachStep) coachDone(S.coachStep); renderActions(); });
+    $('#wm-cancel').addEventListener('click',()=>overlay('ov-weapon',false)); $('#wm-arm').addEventListener('click',armWeapon); $('#wsheet-close').addEventListener('click',()=>overlay('ov-weapons',false));
     $('#btn-copy2').addEventListener('click',copyLink); $('#btn-share2').addEventListener('click',shareLink);
-    $('#btn-surrender').addEventListener('click',async()=>{ Sfx.unlock(); if(S.game.winner) return; if(await confirmDialog('Surrender','Strike your colours and concede this battle?','Surrender')){ S.game=Rules.surrender(S.game, me()); save(); if(S.mode==='net'){ sendGameOver('surrender'); } onGameOver(); } });
-    document.addEventListener('keydown',e=>{ if(S.screen!=='battle') return; if(e.key==='Escape'&&Anim.busy()) Anim.skip(); if(e.key==='Enter'&&!$('#btn-fire').disabled) doFire(); });
-    $('#banner').addEventListener('click',()=>{ if(Anim.busy()) Anim.skip(); });
+    const surrender=async()=>{ Sfx.unlock(); if(S.game.winner) return; if(await confirmDialog('Surrender','Strike your colours and concede this battle?','Surrender')){ S.game=Rules.surrender(S.game, me()); save(); if(S.mode==='net'){ sendGameOver('surrender'); } onGameOver(); } };
+    $('#btn-surrender').addEventListener('click',surrender);
+    // phone menu: everything that is not part of taking a turn
+    const closeMenu=()=>overlay('ov-menu',false);
+    $('#btn-menu').addEventListener('click',()=>{ Sfx.unlock(); overlay('ov-menu',true); }); $('#m-close').addEventListener('click',closeMenu);
+    $('#m-copy').addEventListener('click',copyLink); $('#m-share').addEventListener('click',shareLink);
+    $('#m-settings').addEventListener('click',()=>{ closeMenu(); overlay('ov-settings',true); }); $('#m-howto').addEventListener('click',()=>{ closeMenu(); overlay('ov-howto',true); });
+    $('#m-coach').addEventListener('click',()=>{ closeMenu(); coachReset(); }); $('#m-surrender').addEventListener('click',()=>{ closeMenu(); surrender(); });
+    $('#m-drawer').addEventListener('click',()=>{ closeMenu(); const open=$('#screen-battle').classList.toggle('drawer-open'); Object.values(S.oceans).forEach(o=>o&&o.resize()); if(open) $('#log').scrollIntoView({behavior:'smooth',block:'center'}); else window.scrollTo(0,0); });
+    document.addEventListener('keydown',e=>{ if(S.screen!=='battle') return; if(e.key==='Escape'){ if(Anim.busy()) Anim.skip(); else if(S.pendingMove) cancelMove(); } if(e.key==='Enter'){ if(S.pendingMove) confirmMove(); else { const fb=$('#tray-fire'); if(fb&&!fb.disabled) doFire(); } } });
+    window.addEventListener('resize',syncTrayHeight);
   }
-  // Hovering a maneuver button shows a ghost of where the ship would end up (and the stern pivot for rotations).
-  const MOVE_LABEL={advance:'Advance',reverse:'Reverse',rotcw:'Rotate clockwise',rotccw:'Rotate counter-clockwise'};
-  function previewMove(type){
-    const g=S.game, own=S.oceans.own; if(!g||!own||g.current!==me()||g.phase!=='maneuver'||S.busy||g.winner) return;
-    const fleet=g.players[me()].fleet; const ship=fleet&&fleet[S.selShip]; if(!ship||!ship.bow||ship.sunk) return;
-    const r=Rules.canMoveIn(g,me(),S.selShip,type); const rot=type==='rotcw'||type==='rotccw';
-    own.ghost=r.ok?r.ship:Rules.movedShip(ship,type); own.ghostOk=r.ok; own.pivot=rot?Rules.sternCell(ship):null;
-    const stern=cellName(Rules.sternCell(ship));
-    $('#phase-label').textContent=MOVE_LABEL[type]+' — '+SHIP_CLASSES[ship.cls].name+(rot?': swings 90° about its stern at '+stern+' (the stern stays put). Rotating ENDS YOUR TURN: no shot.':': every section moves one cell '+(type==='advance'?'ahead':'astern')+'; you still fire this turn.')+(r.ok?'':'  ✖ Illegal: '+r.reason);
-    S.previewing=true;
-  }
-  function clearPreview(){ const own=S.oceans.own; if(!own) return; own.ghost=null; own.pivot=null; if(S.previewing){ S.previewing=false; renderActions(); } }
   async function doManeuver(type){
     Sfx.unlock(); const g=S.game; if(S.busy) return; const pid=me(); const idx=S.selShip; const fleet=g.players[pid].fleet;
     const can=Rules.canMoveIn(g, pid, idx, type);
@@ -3227,19 +3263,19 @@ const UI = (function(){
     }
     S.game=r.game; S.busy=false; save();
     if(r.ended){ if(S.mode==='net') send('END_TURN',{}); afterAction(); }
-    else if(r.bonusMove){ S.dragHint=false; refreshBattle(); toast('Fleet exercise: you may move a second undamaged ship, or fire.','',2600); }
-    else { refreshBattle(); setTab('enemy'); toast(r.game.players[pid].moves.slice(-1)[0].dash?'MAS boat dash: two cells. Choose a target and fire.':'Maneuver complete. Choose a target and fire.','',1800); }
+    else if(r.bonusMove){ refreshBattle(); }
+    else { setTab('enemy'); refreshBattle(); if(r.game.players[pid].moves.slice(-1)[0].dash) toast('MAS boat dash: two cells.','',2200); }
   }
   function shipGeom(sh){ return {cls:sh.cls, bow:{x:sh.bow.x,y:sh.bow.y}, heading:sh.heading}; }
   function stripRes(r){ return {result:r.result, cls:r.cls||null, crippled:!!r.crippled, crippledBy:r.crippledBy||null, footprint:r.footprint||null}; }
   function doFire(){
-    Sfx.unlock(); const g=S.game; if(S.busy||S.pendingFire) return; if(g.current!==me()||g.winner) return;
+    Sfx.unlock(); const g=S.game; if(S.busy||S.pendingFire) return; if(g.current!==me()||g.winner) return; coachDone('attack'); vib(15);
     const rd=Rules.weaponReady(g,me(),S.weapon); if(!rd.ok){ toast(rd.reason,'err'); Sfx.buzz(); return; }
     switch(S.weapon){
       case 'shell': if(S.target) return fireShell(S.target); break;
       case 'mine': if(S.target){ const c=S.target; return enqueue(()=>doMine(c)); } break; // queued: the owner's MINE_HIT reply must not overtake the local commit
-      case 'mg': return doMG(S.selShip, S.targets.slice());
-      case 'radar': if(S.target) return doRadar(S.selShip, S.target); break;
+      case 'mg': return doMG(S.fireFrom, S.targets.slice());
+      case 'radar': if(S.target) return doRadar(S.fireFrom, S.target); break;
       case 'airstrike': if(S.target) return doAirstrike(Rules.lineCells(S.target,S.airDir)); break;
       case 'torpedo': if(S.target) return doTorpedo(laneFor(S.target)); break;
     }
@@ -3303,8 +3339,8 @@ const UI = (function(){
     const g=S.game; const attacker=mine?me():them(); const defender=Rules.other(attacker); const an=g.players[attacker].navy||'us', dn=g.players[defender].navy||'uk'; const who=mine?'You':g.players[attacker].name;
     appendLog(mine?'me':'them', who+' fired a torpedo along '+Rules.laneName(shot.lane)+': '+(shot.result===RESULT.MISS?'lane clear':shortRes(shot)+' at '+cellName(shot.cell)), shot.turn);
     const cn=shot.cls?SHIP_CLASSES[shot.cls].name:'';
-    if(shot.result===RESULT.MISS){ toast('Torpedo ran the lane: clear','miss',2000); chat(an,'miss'); }
-    else if(shot.result===RESULT.HIT){ toast('Torpedo hit: '+cn+'!'+(shot.crippled?' Crippled: dead in the water':''),'hit',2600); chat(an, shot.crippled?'hitCrippled':'hit', {cls:cn, ship:shipLabel(defender,shot.cls)}); }
+    if(shot.result===RESULT.MISS){ toast((mine?'Your torpedo':'Enemy torpedo')+' ran the lane: clear','miss',2000); chat(an,'miss'); }
+    else if(shot.result===RESULT.HIT){ toast((mine?'Your torpedo':'Enemy torpedo')+' hit: '+cn+'!'+(shot.crippled?' Crippled: dead in the water':''),'hit',2600); chat(an, shot.crippled?'hitCrippled':'hit', {cls:cn, ship:shipLabel(defender,shot.cls)}); }
     else if(shot.result===RESULT.CONFIRMED){ toast('Torpedo: '+Rules.resultText(shot),'hit',2600); chat(an, shot.moved?'moved':'confirmed', {cls:cn, ship:shipLabel(defender,shot.cls)}); }
     else if(shot.result===RESULT.SUNK){ toast('Torpedo sank the '+cn+'!','sunk',3000); chat(an,'sunkEnemy',{cls:cn, ship:shipLabel(defender,shot.cls)}); chat(dn,'sunkOwn',{cls:cn, ship:shipLabel(defender,shot.cls)}); }
     if(!mine) toast('Enemy torpedo ran '+Rules.laneName(shot.lane)+' — the wake is marked on your ocean','',3200);
@@ -3314,31 +3350,31 @@ const UI = (function(){
     const who=mine?'You':g.players[attacker].name;
     appendLog(mine?'me':'them', who+(weapon==='mg'?' machine-gunned ':' air strike: ')+shots.map(x=>cellName(x.cell)+' '+shortRes(x)).join(', '), shots[0].turn);
     const sunk=shots.find(x=>x.result===RESULT.SUNK), hit=shots.find(x=>x.result===RESULT.HIT), graze=shots.find(x=>x.result===RESULT.GRAZE);
-    if(sunk){ const cn=SHIP_CLASSES[sunk.cls].name; toast('Sunk: '+cn+'!','sunk',3000); chat(an,'sunkEnemy',{cls:cn, ship:shipLabel(defender,sunk.cls)}); chat(dn,'sunkOwn',{cls:cn, ship:shipLabel(defender,sunk.cls)}); }
-    else if(hit){ const cn=SHIP_CLASSES[hit.cls].name; toast('Hit: '+cn+'!'+(hit.crippled?' Crippled: dead in the water':''),'hit',2400); chat(an, hit.crippled?'hitCrippled':'hit', {cls:cn, ship:shipLabel(defender,hit.cls)}); }
-    else if(graze){ toast('Grazed: '+SHIP_CLASSES[graze.cls].name+' — no damage','hit',2200); }
-    else { toast('All rounds missed','miss',1800); chat(an,'miss'); }
+    const pre=(mine?'Your ':'Enemy ')+(weapon==='mg'?'machine gun: ':'air strike: ');
+    if(sunk){ const cn=SHIP_CLASSES[sunk.cls].name; toast(pre+'Sunk: '+cn+'!','sunk',3000); chat(an,'sunkEnemy',{cls:cn, ship:shipLabel(defender,sunk.cls)}); chat(dn,'sunkOwn',{cls:cn, ship:shipLabel(defender,sunk.cls)}); }
+    else if(hit){ const cn=SHIP_CLASSES[hit.cls].name; toast(pre+'Hit: '+cn+'!'+(hit.crippled?' Crippled: dead in the water':''),'hit',2400); chat(an, hit.crippled?'hitCrippled':'hit', {cls:cn, ship:shipLabel(defender,hit.cls)}); }
+    else if(graze){ toast(pre+'Grazed '+SHIP_CLASSES[graze.cls].name+' — no damage','hit',2200); }
+    else { toast(pre+'all missed','miss',1800); chat(an,'miss'); }
     if(!mine) toast('Enemy '+(weapon==='mg'?'machine gun':'air strike')+' — their '+(weapon==='mg'?'firing ship':'Carrier')+' is marked on your grid','',3000);
   }
   function announceRadar(r, ship){
     const g=S.game; appendLog('me','You swept '+areaName(r.area)+' with your '+SHIP_CLASSES[ship.cls].name+': '+r.contacts.length+' contact'+(r.contacts.length===1?'':'s')+'. Turn ends.', g.turn);
     const classes=[...new Set(r.contacts.map(c=>SHIP_CLASSES[c.cls].name))];
-    toast(r.contacts.length?'Radar: '+r.contacts.length+' contact'+(r.contacts.length===1?'':'s')+' ('+classes.join(', ')+') — watch the grid':'Radar: no contacts in '+areaName(r.area),'',3500);
+    toast(r.contacts.length?'Radar: '+r.contacts.length+' contact'+(r.contacts.length===1?'':'s')+' ('+classes.join(', ')+') — watch the grid':'Radar: no contacts in '+areaName(r.area), r.contacts.length?'hit':'miss',3500);
   }
   async function onRemoteMine(p){
     const g=S.game; const r=Rules.layMine(g, them(), p.cell, p.mineId); if(!r.ok){ console.warn('MINE refused', r.reason); return; }
     if(r.immediate){ // it landed on one of our sections: report it and show the blast on our ocean
       const mh=r.immediate; send('MINE_HIT',{mineId:mh.mineId, cell:mh.cell, result:mh.result, cls:mh.cls, crippled:mh.crippled, crippledBy:mh.crippledBy, footprint:mh.footprint, turn:mh.turn});
-      const struck=mh.shipIdx>=0?g.players[me()].fleet[mh.shipIdx]:null; S.busy=true; hideBanner(); renderActions(); setTab('own');
+      const struck=mh.shipIdx>=0?g.players[me()].fleet[mh.shipIdx]:null; S.busy=true; renderActions(); setTab('own');
       await runAnim('own', ()=>Anim.playMineHit(S.oceans.own, mh.cell, mh, {owner:true, ship:struck, shipIdx:mh.shipIdx, navyId:g.players[me()].navy, shakeEl:$('#side-own')}));
       S.game=r.game; S.busy=false; appendLog('them','Enemy mine laid right on your '+SHIP_CLASSES[mh.cls].name+' at '+cellName(mh.cell)+': '+Rules.resultText(mh), mh.turn); toast('MINE! '+Rules.resultText(mh)+' on your '+SHIP_CLASSES[mh.cls].name,'hit',3400); save(); afterAction(); return;
     }
-    S.game=r.game; Sfx.splash(); appendLog('them','Enemy laid a mine somewhere in your waters.', g.turn); toast('Enemy laid a mine somewhere in your waters! Moving is now a gamble.','err',3400); save(); afterAction();
+    S.game=r.game; Sfx.splash(); appendLog('them','Enemy laid a mine somewhere in your waters.', g.turn); toast('Enemy laid a mine somewhere in your waters! Moving is now a gamble.','hit',3400); save(); afterAction();
   }
   async function onRemoteMineHit(p){
     const g=S.game; const r=Rules.applyRemoteMineHit(g, me(), p); if(!r.ok){ console.warn('MINE_HIT refused', r.reason); return; }
-    S.busy=true; renderActions(); setTab('enemy'); hideBanner();
-    await runAnim('enemy', ()=>Anim.playMineHit(S.oceans.enemy, p.cell, r.shot, {owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')}));
+    S.busy=true; renderActions(); setTab('enemy');     await runAnim('enemy', ()=>Anim.playMineHit(S.oceans.enemy, p.cell, r.shot, {owner:false, navyId:g.players[them()].navy, shakeEl:$('#side-enemy')}));
     S.game=r.game; S.busy=false; appendLog('me','Your mine struck at '+cellName(p.cell)+': '+Rules.resultText(r.shot), r.shot.turn); toast('Your mine struck! '+Rules.resultText(r.shot),'sunk',3200);
     const cn=r.shot.cls?SHIP_CLASSES[r.shot.cls].name:''; if(r.shot.result===RESULT.SUNK) chat(g.players[me()].navy,'sunkEnemy',{cls:cn, ship:shipLabel(them(),r.shot.cls)}); else if(r.shot.crippled) chat(g.players[me()].navy,'hitCrippled',{cls:cn, ship:shipLabel(them(),r.shot.cls)});
     save(); afterAction();
@@ -3347,7 +3383,7 @@ const UI = (function(){
     const g=S.game; const r=Rules.radar(g, them(), {ship:p.ship, anchor:p.anchor}); if(!r.ok){ console.warn('RADAR refused', r.reason); return; }
     send('RADAR_RESULT',{contacts:r.contacts, turn:g.turn}); S.game=r.game; Sfx.radarPing();
     const cells=Rules.shipCells(p.ship); appendLog('them','Enemy radar sweep from their '+SHIP_CLASSES[p.ship.cls].name+' at '+cellName(cells[0])+'–'+cellName(cells[cells.length-1])+' — position marked on your grid.', g.turn);
-    toast('Enemy radar sweep! Their '+SHIP_CLASSES[p.ship.cls].name+' revealed itself at '+cellName(cells[0])+'–'+cellName(cells[cells.length-1]),'err',3600); save(); afterAction();
+    toast('Enemy radar sweep! Their '+SHIP_CLASSES[p.ship.cls].name+' revealed itself at '+cellName(cells[0])+'–'+cellName(cells[cells.length-1]),'hit',3600); save(); afterAction();
   }
   async function onRemoteRadarResult(p){
     const g=S.game; const pf=S.pendingFire; if(!pf||pf.weapon!=='radar'){ console.warn('unexpected RADAR_RESULT'); return; }
@@ -3358,37 +3394,37 @@ const UI = (function(){
   }
   function announceShot(shot, mine){
     const g=S.game; const attacker=mine?me():them(); const defender=Rules.other(attacker); const an=g.players[attacker].navy||'us', dn=g.players[defender].navy||'uk';
-    const cn=shot.cls?SHIP_CLASSES[shot.cls].name:''; const shipName=shot.cls?shipLabel(defender,shot.cls):'';
+    const cn=shot.cls?SHIP_CLASSES[shot.cls].name:''; const shipName=shot.cls?shipLabel(defender,shot.cls):''; const pre=(mine?'You → ':'Enemy → ')+cellName(shot.cell)+': ';
     appendLog(mine?'me':'them',(mine?'You':g.players[attacker].name)+' fired at '+cellName(shot.cell)+': '+Rules.resultText(shot), shot.turn);
-    if(shot.result===RESULT.MISS){ toast('Miss','miss',1600); chat(an,'miss'); }
-    else if(shot.result===RESULT.HIT){ toast('Hit: '+cn+'!'+(shot.crippled?' Crippled: dead in the water':''),'hit',2400); chat(an, shot.crippled?'hitCrippled':'hit', {cls:cn, ship:shipName}); }
-    else if(shot.result===RESULT.CONFIRMED){ toast(Rules.resultText(shot),'hit',2600); chat(an, shot.moved?'moved':'confirmed', {cls:cn, ship:shipName}); }
-    else if(shot.result===RESULT.SUNK){ toast('Sunk: '+cn+'!','sunk',3000); chat(an,'sunkEnemy',{cls:cn, ship:shipName}); chat(dn,'sunkOwn',{cls:cn, ship:shipName}); }
+    if(shot.result===RESULT.MISS){ toast(pre+'Miss','miss',1600); chat(an,'miss'); }
+    else if(shot.result===RESULT.HIT){ toast(pre+'Hit: '+cn+'!'+(shot.crippled?' Crippled: dead in the water':''),'hit',2400); chat(an, shot.crippled?'hitCrippled':'hit', {cls:cn, ship:shipName}); }
+    else if(shot.result===RESULT.CONFIRMED){ toast(pre+Rules.resultText(shot),'hit',2600); chat(an, shot.moved?'moved':'confirmed', {cls:cn, ship:shipName}); }
+    else if(shot.result===RESULT.SUNK){ toast(pre+'Sunk: '+cn+'!','sunk',3000); chat(an,'sunkEnemy',{cls:cn, ship:shipName}); chat(dn,'sunkOwn',{cls:cn, ship:shipName}); }
   }
   function afterAction(){ save(); if(S.screen!=='battle') return; refreshBattle(); checkTurn(); }
   async function checkTurn(){
     const g=S.game; if(g.winner){ onGameOver(); return; }
-    if(S.mode==='ai'){ if(g.current==='guest'){ banner('Enemy turn — stand by', true); setTimeout(aiTurn, 900*Anim.scale()+200); } else myTurnBanner(); return; }
-    if(S.mode==='hotseat'){ if(g.current!==S.viewAs){ hideBanner(); await curtain('Pass the device to '+g.players[g.current].name, 'Turn '+g.turn+'. Both oceans are hidden until the next admiral is ready.'); S.viewAs=g.current; S.target=null; S.targets=[]; S.weapon='shell'; S.selShip=firstMobileShip(); S.oceans.own.clearEffects(); S.oceans.enemy.clearEffects(); S.oceans.enemy.radarView=null; S.oceans.own.radarView=null; S.oceans.enemy.hoverArea=null; S.oceans.enemy.hoverLine=null; renderLog(); refreshBattle(); setTab('own'); } myTurnBanner(); return; }
-    if(g.current===me()){ if(S.pendingFire){ S.pendingFire=null; } myTurnBanner(); } else banner('Enemy turn — stand by', true);
+    if(S.mode==='ai'){ if(g.current==='guest'){ renderActions(); setTimeout(aiTurn, 1400*Anim.scale()+400); } else startMyTurn(); return; }
+    if(S.mode==='hotseat'){ if(g.current!==S.viewAs){ await curtain('Pass the device to '+g.players[g.current].name, 'Turn '+g.turn+'. Both oceans are hidden until the next admiral is ready.'); S.viewAs=g.current; S.target=null; S.targets=[]; S.weapon='shell'; S.moveSel=false; S.pendingMove=null; S.result=null; S.lastAction=null; S.fireFrom=0; S.selShip=firstMobileShip(); S.oceans.own.clearEffects(); S.oceans.enemy.clearEffects(); S.oceans.enemy.radarView=null; S.oceans.own.radarView=null; S.oceans.enemy.hoverArea=null; S.oceans.enemy.hoverLine=null; renderLog(); refreshBattle(); setTab('own'); } startMyTurn(); return; }
+    if(g.current===me()){ if(S.pendingFire){ S.pendingFire=null; } startMyTurn(); } else renderActions();
   }
-  function myTurnBanner(){ S.dragHint=false; S.pendingMove=null; if(S.oceans.own){ S.oceans.own.ghost=null; S.oceans.own.pivot=null; } banner('Your turn, Admiral', false, 1800); Sfx.chime(); chat(S.game.players[me()].navy||'us','turnStart'); if(S.game.phase==='maneuver') setTab('own'); else setTab('enemy'); renderActions(); }
+  function startMyTurn(){ S.pendingMove=null; S.moveSel=false; flashStatus(); Sfx.chime(); vib(15); chat(S.game.players[me()].navy||'us','turnStart'); setTab(S.game.phase==='maneuver'?'own':'enemy'); }
   async function aiTurn(){
     const g=S.game; if(g.winner||g.current!=='guest') return;
     const t=AI.takeTurn(g,'guest',S.rng); S.busy=true;
     const mineHits=t.game.log.slice(g.log.length).filter(e=>e.kind==='shot'&&e.weapon==='mine'&&e.player==='host');
-    if(mineHits.length){ hideBanner(); setTab('enemy'); for(const mh of mineHits){ await runAnim('enemy', ()=>Anim.playMineHit(S.oceans.enemy, mh.cell, mh, {owner:false, navyId:g.players.guest.navy, shakeEl:$('#side-enemy')})); appendLog('me','Your mine struck at '+cellName(mh.cell)+': '+Rules.resultText(mh), mh.turn); toast('Your mine struck! '+Rules.resultText(mh),'sunk',3200); } S.oceans.enemy.pegs=Rules.pegMap(t.game.players.host.shots); }
-    if(t.rotated){ S.game=t.game; if(!t.game.winner) appendLog('them','Enemy fleet maneuvered — no shot this turn.', g.turn); S.busy=false; hideBanner(); afterAction(); return; }
-    const a=t.action; if(!a){ S.game=t.game; S.busy=false; hideBanner(); afterAction(); return; }
-    hideBanner(); const myFleet=g.players.host.fleet, myNavy=g.players.host.navy, own=S.oceans.own, en=S.oceans.enemy; setTab('own');
+    if(mineHits.length){ setTab('enemy'); for(const mh of mineHits){ await runAnim('enemy', ()=>Anim.playMineHit(S.oceans.enemy, mh.cell, mh, {owner:false, navyId:g.players.guest.navy, shakeEl:$('#side-enemy')})); appendLog('me','Your mine struck at '+cellName(mh.cell)+': '+Rules.resultText(mh), mh.turn); toast('Your mine struck! '+Rules.resultText(mh),'sunk',3200); } S.oceans.enemy.pegs=Rules.pegMap(t.game.players.host.shots); }
+    if(t.rotated){ S.game=t.game; if(!t.game.winner) appendLog('them','Enemy fleet maneuvered — no shot this turn.', g.turn); S.busy=false; afterAction(); return; }
+    const a=t.action; if(!a){ S.game=t.game; S.busy=false; afterAction(); return; }
+    const myFleet=g.players.host.fleet, myNavy=g.players.host.navy, own=S.oceans.own, en=S.oceans.enemy; setTab('own');
     S.oceans.enemy.sightings=t.game.players.host.sightings; // reveals from the AI's weapon use show on the tracking grid right away
     switch(a.weapon){
       case 'shell': { const shot=a.shot; const struck=shot.shipIdx>=0?myFleet[shot.shipIdx]:null; await runAnim('own', ()=>Anim.playShot(own,{cell:shot.cell, shot, owner:true, ship:struck, shipIdx:shot.shipIdx, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; announceShot(shot,false); if(t.game.current==='guest'&&!t.game.winner) toast('Enemy escort screen: that confirm cost them no shot — they fire again.','err',3200); break; }
       case 'mg': { const src=a.sighting&&a.sighting.cells?a.sighting.cells:null; await runAnim('own', ()=>Anim.playMG(own, a.cells, a.results, {srcOcean:en, srcCells:src, fromLeft:false, owner:true, fleet:myFleet, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; announceGroup(a.shots,false,'mg'); break; }
       case 'airstrike': { const src=a.sighting&&a.sighting.cells?a.sighting.cells:null; await runAnim('own', ()=>Anim.playAirstrike(own, a.cells, a.results, {srcOcean:en, srcCells:src, owner:true, fleet:myFleet, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; announceGroup(a.shots,false,'airstrike'); break; }
       case 'torpedo': { const sh=a.shot; const struck=sh.shipIdx>=0?myFleet[sh.shipIdx]:null; await runAnim('own', ()=>Anim.playTorpedo(own, a.path, sh.stopIndex, sh, {owner:true, ship:struck, shipIdx:sh.shipIdx, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; announceTorpedo(sh,false); break; }
-      case 'mine': { if(a.immediate){ const mh=a.immediate; const struck=mh.shipIdx>=0?myFleet[mh.shipIdx]:null; await runAnim('own', ()=>Anim.playMineHit(own, mh.cell, mh, {owner:true, ship:struck, shipIdx:mh.shipIdx, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; appendLog('them','Enemy mine laid right on your '+SHIP_CLASSES[mh.cls].name+' at '+cellName(mh.cell)+': '+Rules.resultText(mh), mh.turn); toast('MINE! '+Rules.resultText(mh)+' on your '+SHIP_CLASSES[mh.cls].name,'hit',3400); } else { S.game=t.game; S.busy=false; Sfx.splash(); appendLog('them','Enemy laid a mine somewhere in your waters.', g.turn); toast('Enemy laid a mine somewhere in your waters! Moving is now a gamble.','err',3400); } break; }
-      case 'radar': { S.game=t.game; S.busy=false; Sfx.radarPing(); const sg=a.sighting; const cells=sg&&sg.cells?sg.cells:null; appendLog('them','Enemy radar sweep from their '+SHIP_CLASSES[sg.cls].name+(cells?' at '+cellName(cells[0])+'–'+cellName(cells[cells.length-1]):'')+' — position marked on your grid.', g.turn); toast('Enemy radar sweep! Their '+SHIP_CLASSES[sg.cls].name+' revealed itself'+(cells?' at '+cellName(cells[0])+'–'+cellName(cells[cells.length-1]):''),'err',3600); break; }
+      case 'mine': { if(a.immediate){ const mh=a.immediate; const struck=mh.shipIdx>=0?myFleet[mh.shipIdx]:null; await runAnim('own', ()=>Anim.playMineHit(own, mh.cell, mh, {owner:true, ship:struck, shipIdx:mh.shipIdx, navyId:myNavy, shakeEl:$('#side-own')})); S.game=t.game; S.busy=false; appendLog('them','Enemy mine laid right on your '+SHIP_CLASSES[mh.cls].name+' at '+cellName(mh.cell)+': '+Rules.resultText(mh), mh.turn); toast('MINE! '+Rules.resultText(mh)+' on your '+SHIP_CLASSES[mh.cls].name,'hit',3400); } else { S.game=t.game; S.busy=false; Sfx.splash(); appendLog('them','Enemy laid a mine somewhere in your waters.', g.turn); toast('Enemy laid a mine somewhere in your waters! Moving is now a gamble.','hit',3400); } break; }
+      case 'radar': { S.game=t.game; S.busy=false; Sfx.radarPing(); const sg=a.sighting; const cells=sg&&sg.cells?sg.cells:null; appendLog('them','Enemy radar sweep from their '+SHIP_CLASSES[sg.cls].name+(cells?' at '+cellName(cells[0])+'–'+cellName(cells[cells.length-1]):'')+' — position marked on your grid.', g.turn); toast('Enemy radar sweep! Their '+SHIP_CLASSES[sg.cls].name+' revealed itself'+(cells?' at '+cellName(cells[0])+'–'+cellName(cells[cells.length-1]):''),'hit',3600); break; }
       default: S.game=t.game; S.busy=false;
     }
     save(); afterAction();
@@ -3399,14 +3435,14 @@ const UI = (function(){
     if(w==='torpedo'){
       const r=Rules.torpedo(g, them(), {lane:p.lane}); if(!r.ok){ console.warn('torpedo refused', r.reason); return; }
       const sh=r.shot; send('RESULT',{weapon:'torpedo', lane:p.lane, cell:sh.cell, result:sh.result, cls:sh.cls, crippled:sh.crippled, crippledBy:sh.crippledBy, footprint:sh.footprint, stopIndex:sh.stopIndex, turn:sh.turn});
-      const struck=sh.shipIdx>=0?myFleet[sh.shipIdx]:null; S.busy=true; hideBanner(); renderActions(); setTab('own');
+      const struck=sh.shipIdx>=0?myFleet[sh.shipIdx]:null; S.busy=true; renderActions(); setTab('own');
       await runAnim('own', ()=>Anim.playTorpedo(S.oceans.own, r.path, sh.stopIndex, sh, {owner:true, ship:struck, shipIdx:sh.shipIdx, navyId:myNavy, shakeEl:$('#side-own')}));
       S.game=r.game; S.busy=false; announceTorpedo(sh,false); save(); afterAction(); return;
     }
     if(w==='mg'||w==='airstrike'){
       const r=w==='mg'?Rules.fireMG(g, them(), {ship:p.ship, cells:p.cells}):Rules.airstrike(g, them(), {ship:p.ship, cells:p.cells}); if(!r.ok){ console.warn(w+' refused', r.reason); return; }
       send('RESULT',{weapon:w, cells:p.cells, results:r.results.map(stripRes), turn:g.turn});
-      S.busy=true; hideBanner(); renderActions(); setTab('own'); S.oceans.enemy.sightings=r.game.players[me()].sightings;
+      S.busy=true; renderActions(); setTab('own'); S.oceans.enemy.sightings=r.game.players[me()].sightings;
       await runAnim('own', ()=> w==='mg'?Anim.playMG(S.oceans.own, p.cells, r.results, {srcOcean:S.oceans.enemy, srcCells:Rules.shipCells(p.ship), fromLeft:false, owner:true, fleet:myFleet, navyId:myNavy, shakeEl:$('#side-own')})
                         :Anim.playAirstrike(S.oceans.own, p.cells, r.results, {srcOcean:S.oceans.enemy, srcCells:Rules.shipCells(p.ship), owner:true, fleet:myFleet, navyId:myNavy, shakeEl:$('#side-own')}));
       S.game=r.game; S.busy=false; announceGroup(r.shots, false, w); save(); afterAction(); return;
@@ -3414,7 +3450,7 @@ const UI = (function(){
     const cell=p.cell; if(!cell){ console.warn('FIRE without cell', p); return; }
     const r=Rules.fire(g, them(), cell); if(!r.ok){ console.warn('FIRE refused', r.reason); return; }
     const shot=r.shot; send('RESULT',{weapon:'shell', cell:shot.cell, result:shot.result, cls:shot.cls, crippled:shot.crippled, crippledBy:shot.crippledBy, footprint:shot.footprint, turn:shot.turn});
-    const struck=shot.shipIdx>=0?myFleet[shot.shipIdx]:null; S.busy=true; hideBanner(); renderActions(); setTab('own');
+    const struck=shot.shipIdx>=0?myFleet[shot.shipIdx]:null; S.busy=true; renderActions(); setTab('own');
     await runAnim('own', ()=>Anim.playShot(S.oceans.own,{cell, shot, owner:true, ship:struck, shipIdx:shot.shipIdx, navyId:myNavy, shakeEl:$('#side-own')}));
     S.game=r.game; S.busy=false; announceShot(shot,false); if(r.freeShot) toast('Enemy escort screen: that confirm cost them no shot — they fire again.','err',3200); save(); afterAction();
   }
@@ -3460,7 +3496,7 @@ const UI = (function(){
     g.log.sort((a,b)=>a.turn-b.turn||(a.kind==='move'?0:1)-(b.kind==='move'?0:1)); g.log.forEach((e,i)=>e.n=i);
   }
   async function onGameOver(){
-    if(S.gameOverHandled) return; S.gameOverHandled=true; const g=S.game; hideBanner(); S.busy=false; S.pendingFire=null;
+    if(S.gameOverHandled) return; S.gameOverHandled=true; const g=S.game; S.busy=false; S.pendingFire=null;
     if(S.mode==='net') sendGameOver(); save(); if(S.mode!=='net') soloSync(true); refreshBattle();
     const won=g.winner===me(); const myN=g.players[me()].navy||'us', opN=g.players[them()].navy||'uk';
     const lines=navy(myN).chatter[won?'victory':'defeat']; const line=lines[Math.floor(Math.random()*lines.length)];
