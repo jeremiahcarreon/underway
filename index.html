@@ -1529,6 +1529,7 @@ const AI = (function(){
     const classes=Object.keys(byCls).sort((a,b)=>byCls[b].length-byCls[a].length);
     for(const cls of classes){
       const hits=byCls[cls], cells=hits.map(h=>h.cell), axis=lineAxis(cells);
+      const grazed=hits.filter(h=>h.result===RESULT.GRAZE); if(grazed.length) return grazed[0].cell;   // a graze proves an undamaged section sits there: shell it
       const lastHit=Math.max(...shots.filter(x=>x.cls===cls&&(x.result===RESULT.HIT||x.result===RESULT.GRAZE)).map(x=>x.turn));
       const open=c=>{ if(!Rules.inBounds(c)||cells.some(h=>key(h)===key(c))) return false; const t=taken.get(key(c)); return !t||(t.result===RESULT.MISS&&t.turn<lastHit); };
       let cands=[];
