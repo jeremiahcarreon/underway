@@ -1532,8 +1532,9 @@ const AI = (function(){
       const lastHit=Math.max(...shots.filter(x=>x.cls===cls&&(x.result===RESULT.HIT||x.result===RESULT.GRAZE)).map(x=>x.turn));
       const open=c=>{ if(!Rules.inBounds(c)||cells.some(h=>key(h)===key(c))) return false; const t=taken.get(key(c)); return !t||(t.result===RESULT.MISS&&t.turn<lastHit); };
       let cands=[];
-      if(axis==='x'){ const y=cells[0].y, xs=cells.map(c=>c.x); cands=[{x:Math.max(...xs)+1,y},{x:Math.min(...xs)-1,y}]; }
-      else if(axis==='y'){ const x=cells[0].x, ys=cells.map(c=>c.y); cands=[{x,y:Math.max(...ys)+1},{x,y:Math.min(...ys)-1}]; }
+      // along a known axis: any gap between the hits first (mines, bombs and torpedoes can hit out of order), then the two ends
+      if(axis==='x'){ const y=cells[0].y, xs=cells.map(c=>c.x), lo=Math.min(...xs), hi=Math.max(...xs); for(let x=lo+1;x<hi;x++) cands.push({x,y}); cands=cands.filter(open); if(!cands.length) cands=[{x:hi+1,y},{x:lo-1,y}]; }
+      else if(axis==='y'){ const x=cells[0].x, ys=cells.map(c=>c.y), lo=Math.min(...ys), hi=Math.max(...ys); for(let y=lo+1;y<hi;y++) cands.push({x,y}); cands=cands.filter(open); if(!cands.length) cands=[{x,y:hi+1},{x,y:lo-1}]; }
       else cells.forEach(c=>neighbors(c).forEach(v=>cands.push(v)));
       cands=cands.filter(open); if(cands.length) return rng.pick(cands);
       if(mem.confirmed[cls]!=null&&n-mem.confirmed[cls]<12) continue;   // checked recently: leave this one for now
