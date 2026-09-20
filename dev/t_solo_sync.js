@@ -1,5 +1,5 @@
 // Solo games while signed in: synced to the server, listed in My games, resumable from a fresh browser, replayable, counted in the vs-AI record. Also: the Fleet Admiral AI uses weapons.
-const {Browser,cellXY,waitFor,selectShip}=require('./cdp.js'); const {spawn}=require('child_process'); const fs=require('fs'); const os=require('os'); const path=require('path');
+const {Browser,cellXY,waitFor,tapEnemy,showTab,pickWeapon}=require('./cdp.js'); const {spawn}=require('child_process'); const fs=require('fs'); const os=require('os'); const path=require('path');
 const PORT=8950+Math.floor(Math.random()*40); const DATA=fs.mkdtempSync(path.join(os.tmpdir(),'underway-solo-')); const URL='http://127.0.0.1:'+PORT+'/';
 const srv=spawn(process.execPath,['--no-warnings=ExperimentalWarning',path.join(__dirname,'..','server','server.js')],{env:Object.assign({},process.env,{PORT:String(PORT),DATA_DIR:DATA}),stdio:['ignore','ignore','pipe']}); srv.stderr.on('data',d=>process.stderr.write('[server] '+d));
 process.on('exit',()=>{ try{ srv.kill('SIGKILL'); }catch(e){} try{ fs.rmSync(DATA,{recursive:true,force:true}); }catch(e){} });
@@ -7,7 +7,6 @@ const P=(x,y)=>({x,y}); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function st(b){ return b.eval(`(()=>{const S=Underway.UI.S; return {cur:S.game.current, phase:S.game.phase, turn:S.game.turn, busy:S.busy, winner:S.game.winner, screen:S.screen, room:S.room};})()`); }
 async function settle(b){ for(let i=0;i<140;i++){ const s=await st(b); if(!s.busy && (s.cur==='host'||s.winner)) return s; await b.wait(150); if(i%4===3) await b.eval(`Underway.Anim.skip()`); } throw new Error('never settled'); }
 async function signIn(b,name,pin){ await b.goto(URL); await b.wait(500); await b.eval(`document.getElementById('adm-name').value=${JSON.stringify(name)}; document.getElementById('adm-pin').value=${JSON.stringify(pin)};`); await b.click('#btn-signin'); await waitFor(b, `!document.getElementById('online-panel').classList.contains('hidden')`, 8000, 'signed in'); }
-async function tapEnemy(b,cell){ const xy=await cellXY(b,'enemy',cell); await b.clickCanvas('#enemyCanvas',xy.x,xy.y); await b.wait(60); }
 (async()=>{
   for(let i=0;i<40;i++){ try{ await fetch(URL+'api/health'); break; }catch(e){ await sleep(150); } }
   let b=new Browser({}); await b.launch(); await signIn(b,'TheMan','1234');
@@ -15,7 +14,7 @@ async function tapEnemy(b,cell){ const xy=await cellXY(b,'enemy',cell); await b.
   await b.click('.ailvl[data-level="fleet"]'); await b.click('#btn-ai'); await b.wait(200); await b.click('.preset[data-preset="arsenal"]'); await b.click('.navybtn:nth-child(2)'); await b.click('#btn-lobby-start'); await b.wait(200); await b.click('.tpl[data-tpl="spread"]'); await b.click('#btn-ready'); await waitFor(b, `Underway.UI.S.screen==='battle'`, 9000); await b.eval(`Underway.UI.S.settings.fast=true; Underway.Anim.settings.fast=true;`);
   let s=await settle(b); const code=s.room; console.log('solo game', code);
   const weaponsSeen=new Set();
-  for(let t=0;t<28;t++){ if(s.winner) break; const before=await b.eval(`Underway.UI.S.game.log.length`); await b.click('.weapons .wgroup:nth-child(1) button.wpn'); await tapEnemy(b,P(t%10,Math.floor(t/10)+2)); if(await b.eval(`document.getElementById('btn-fire').disabled`)) continue; await b.click('#btn-fire'); s=await settle(b);
+  for(let t=0;t<28;t++){ if(s.winner) break; const before=await b.eval(`Underway.UI.S.game.log.length`); await showTab(b,'enemy'); await tapEnemy(b,P(t%10,Math.floor(t/10)+2)); if(await b.eval(`!document.getElementById('tray-fire')||document.getElementById('tray-fire').disabled`)) continue; await b.click('#tray-fire'); s=await settle(b);
     const ws=await b.eval(`Underway.UI.S.game.log.slice(${before}).filter(e=>e.player==='guest'&&(e.kind==='shot'||e.kind==='mine'||e.kind==='radar')).map(e=>e.kind==='shot'?(e.weapon||'shell'):e.kind)`); ws.forEach(w=>weaponsSeen.add(w)); }
   console.log('AI weapons seen in 28 turns:', [...weaponsSeen].join(', '), '| turn', s.turn);
   await sleep(1600); const me1=await (await fetch(URL+'api/me?token='+encodeURIComponent(await b.eval(`Underway.UI.S.admiral.token`)))).json(); const sg=me1.games.find(g=>g.code===code); console.log('server knows the solo game:', sg?sg.kind+' '+sg.status+' turn '+sg.turns:'MISSING');
