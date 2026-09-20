@@ -127,7 +127,10 @@ h3{font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.12
 .tray-result span{flex:1;min-width:0}
 .tray-main{display:flex;align-items:center;gap:8px;min-height:48px}
 .tray-text{flex:1;min-width:0;line-height:1.2}
-.tray-text b{display:block;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tray-text b{display:block;font-size:17px;line-height:1.15;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.tray-chips{display:flex;gap:6px;align-items:center}
+.tray-chips .lbl{font-size:12px;color:var(--muted);margin-right:2px}
+.tray-chips .chip{flex:1;min-height:40px;padding:4px 8px;font-size:14px}
 .tray-text span{font-size:12.5px;color:var(--muted)}
 .tray-btns{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;max-width:62%}
 .tray-btns button.fire{background:var(--danger);border-color:#ff7a70;font-weight:800;letter-spacing:.06em;min-width:92px}
