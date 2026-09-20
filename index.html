@@ -78,16 +78,7 @@ h3{font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.12
 .ocean canvas{display:block;width:100%;height:auto;border-radius:10px;touch-action:none;background:#0a2438;grid-column:1 / -1;grid-row:2}
 .ocean .label{grid-row:1;grid-column:1;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#cfe3f5;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:20px}
 .ocean .badge{grid-row:1;grid-column:2;font-size:11px;letter-spacing:.1em;color:#fff;background:#0008;padding:2px 8px;border-radius:10px;white-space:nowrap}
-.ocean .prompt{position:absolute;left:8px;right:8px;bottom:8px;z-index:4;display:none;background:#0a1621f2;border:1px solid var(--accent);border-radius:10px;padding:8px 10px;font-size:13.5px;box-shadow:0 8px 30px #000b}
-.ocean .prompt.show{display:block}
-.ocean .prompt .ptext{line-height:1.35;margin-bottom:6px}
-.ocean .prompt .row{gap:6px}
-.strip{margin:0 auto 6px;max-width:560px}
-.strip .weapons{flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}
-.strip .weapons .wgroup{flex:0 0 auto}
 .strip #weapon-desc{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
-#btn-drawer{display:none;width:100%;margin:8px 0}
-@media (min-width: 721px){ .strip .weapons{flex-wrap:wrap;overflow:visible} .strip #weapon-desc{white-space:normal} }
 
 /* ---- fleet dock ---- */
 .dock{display:flex;flex-direction:column;gap:4px;margin-top:8px}
@@ -115,7 +106,46 @@ h3{font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.12
 .topbar .turn{font-weight:700;font-size:14px;padding:4px 10px;background:var(--bg2);border-radius:6px}
 .battle{display:grid;grid-template-columns:1fr 1fr 240px;gap:10px;align-items:start}
 .battle .side{min-width:0}
-.tabs{display:none;gap:6px;margin-bottom:8px}
+.statusline{display:none;align-items:center;gap:8px;padding:4px 10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-bottom:6px;min-height:40px}
+.statusline .conn .txt{display:none}
+.turn-status{font-weight:700;font-size:14px;letter-spacing:.02em}
+.turn-status.flash{animation:statusflash 1.4s ease-out}
+@keyframes statusflash{0%{color:var(--accent);text-shadow:0 0 14px #ffb347}100%{color:inherit}}
+/* action tray: the only control surface during a battle; the map is never covered */
+.tray{position:sticky;bottom:0;margin-top:10px;background:#0f1d2bf7;border:1px solid var(--line);border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;backdrop-filter:blur(6px);z-index:6}
+.tray-fleet{display:flex;gap:4px}
+.tray-fleet .pip{flex:1;min-height:32px;padding:2px 4px;font-size:11px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border-radius:6px;border:1px solid var(--line);background:var(--bg2);color:var(--text)}
+.pip .dots{display:flex;gap:2px}
+.pip .dots i{width:7px;height:5px;border-radius:1px;background:#3d5a75;display:block}
+.pip .dots i.hit{background:#e0453b}
+.pip.sunk{opacity:.4;text-decoration:line-through}
+.pip.crippled b{color:#ff9a90}
+.tray-result{display:flex;align-items:center;gap:6px;background:#0a1621;border-left:4px solid var(--accent);border-radius:8px;padding:5px 8px;font-size:14px;font-weight:600}
+.tray-result.hit{border-left-color:var(--danger)}
+.tray-result.miss{border-left-color:#8ab}
+.tray-result.sunk{border-left-color:#ff8c00}
+.tray-result span{flex:1;min-width:0}
+.tray-main{display:flex;align-items:center;gap:8px;min-height:48px}
+.tray-text{flex:1;min-width:0;line-height:1.2}
+.tray-text b{display:block;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tray-text span{font-size:12.5px;color:var(--muted)}
+.tray-btns{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;max-width:62%}
+.tray-btns button.fire{background:var(--danger);border-color:#ff7a70;font-weight:800;letter-spacing:.06em;min-width:92px}
+.tray-btns button.fire:disabled{background:#3a2422}
+.tray-btns .chip{min-width:44px;padding:6px 10px}
+.tray-msg{font-size:12.5px;color:var(--muted);min-height:16px;line-height:1.25}
+.tray-msg.err{color:#ff9a90}
+.tray-msg.chat{font-style:italic}
+.tray-coach{display:flex;gap:8px;align-items:center;background:#22361a;border:1px solid var(--ok);border-radius:8px;padding:8px;font-size:13.5px;line-height:1.35;animation:coachpulse 1.6s ease-in-out 3}
+.tray-coach span{flex:1}
+@keyframes coachpulse{50%{box-shadow:0 0 0 4px #3ecf8e55}}
+.overlay.sheet .card{max-width:560px}
+.wrow .wline{display:flex;align-items:stretch;gap:0}
+.wrow .wline .opt{flex:1;border-radius:8px 0 0 8px}
+.wrow .wline .help{border-radius:0 8px 8px 0;border-left:none;min-width:40px;font-weight:700;color:var(--accent2)}
+.wrow .wopts{margin:6px 0 4px 14px}
+.opt .tag.gone{color:#ff9a90}
+.tabs{display:none;gap:6px;margin-bottom:6px}
 .tabs button{flex:1}
 .tabs button.active{background:var(--accent);color:#1a1200;font-weight:700}
 .tally{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-top:8px}
@@ -131,12 +161,6 @@ h3{font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.12
 .log .them{border-left:3px solid var(--danger)}
 .log .sys{border-left:3px solid var(--muted);color:var(--muted)}
 .log .chat{font-style:italic;color:#c7d8e8}
-.actions{position:sticky;bottom:0;display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px;padding:8px;background:#0f1d2bee;border:1px solid var(--line);border-radius:12px;backdrop-filter:blur(6px);z-index:5}
-.actions select{font-family:inherit;font-size:14px;color:var(--text);background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:8px;min-height:44px;max-width:200px}
-.actions .phase{font-size:12px;letter-spacing:.06em;color:var(--muted);width:100%}
-.actions button small{display:block;font-size:10px;font-weight:400;opacity:.75;letter-spacing:.03em;margin-top:2px}
-.actions button.fire{background:var(--danger);border-color:#ff7a70;font-weight:800;letter-spacing:.1em;min-width:110px}
-.actions button.fire:disabled{background:#3a2422}
 .weapons{display:flex;gap:4px;flex-wrap:wrap;width:100%}
 .weapons button{min-height:40px;padding:4px 10px;font-size:12.5px;line-height:1.05}
 .weapons button.selected{background:var(--accent);color:#1a1200;font-weight:700}
@@ -164,10 +188,6 @@ h3{font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.12
 .overlay{position:fixed;inset:0;background:#050b12dd;display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
 .overlay.active{display:flex}
 .overlay .card{max-width:520px;width:100%;max-height:92vh;overflow:auto}
-.banner{position:fixed;left:0;right:0;top:38%;text-align:center;pointer-events:none;z-index:40;opacity:0;transition:opacity .3s}
-.banner.show{opacity:1}
-.banner div{display:inline-block;padding:14px 28px;background:#0a1621ee;border:2px solid var(--accent);border-radius:14px;font-size:22px;font-weight:800;letter-spacing:.1em;box-shadow:0 8px 40px #000c}
-.banner .radar{width:56px;height:56px;margin:0 auto 6px;display:block}
 .toasts{position:fixed;left:50%;transform:translateX(-50%);bottom:110px;display:flex;flex-direction:column;gap:6px;z-index:45;pointer-events:none;align-items:center;width:min(94vw,520px)}
 .toast{background:#0a1621f0;border:1px solid var(--line);border-left:4px solid var(--accent);padding:8px 14px;border-radius:8px;font-size:14px;animation:toastin .25s ease-out;box-shadow:0 6px 24px #000a;max-width:100%}
 .toast.hit{border-left-color:var(--danger)}
@@ -232,12 +252,13 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
   .battle .side.inactive{display:none}
   .logbox{height:160px}
   .ocean{max-width:100%}
-  #btn-drawer{display:block}
+  .topbar{display:none}
+  .statusline{display:flex}
+  #screen-battle{padding-bottom:var(--tray-h,200px)}
+  .tray{position:fixed;left:0;right:0;bottom:0;margin:0;border-radius:14px 14px 0 0;border-bottom:none;padding-bottom:calc(8px + env(safe-area-inset-bottom))}
+  .overlay.sheet{align-items:flex-end;padding:0}
+  .overlay.sheet .card{border-radius:16px 16px 0 0;max-height:82vh}
   #screen-battle:not(.drawer-open) .drawerable{display:none!important}
-  .actions{position:static}
-  .actions{gap:5px}
-  .actions button{padding:8px 10px;font-size:14px}
-  .actions select{max-width:150px}
   h1{font-size:28px}
   .replay{grid-template-columns:1fr}
 }
