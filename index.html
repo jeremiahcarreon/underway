@@ -1959,7 +1959,7 @@ const Render = (function(){
   /* ---------- Ocean ---------- */
   function createOcean(canvas, opts){
     opts=opts||{};
-    const o={ canvas, ctx:canvas.getContext('2d'), kind:opts.kind||'own', cell:32, margin:20, dpr:1, w:0, h:0, effects:[], hover:null, target:null, targets:[], area:null, hoverArea:null, hoverLine:null, mines:[], sightings:[], radarView:null, wakes:[], lane:null, selected:-1, ghost:null, ghostOk:true, pivot:null,
+    const o={ canvas, ctx:canvas.getContext('2d'), kind:opts.kind||'own', cell:32, margin:20, dpr:1, w:0, h:0, effects:[], hover:null, target:null, targets:[], area:null, hoverArea:null, hoverLine:null, mines:[], sightings:[], radarView:null, wakes:[], lane:null, handles:[], selected:-1, ghost:null, ghostOk:true, pivot:null,
               fleet:null, navyId:null, pegs:null, turn:1, hideShips:false, shipFx:{}, hideWreckCls:null, listen:true, reduced:false, static:false };
     o.resize=function(){
       const rect=canvas.getBoundingClientRect(); const cssW=Math.max(200, rect.width||canvas.clientWidth||560);
@@ -2193,6 +2193,18 @@ const Render = (function(){
     ctx.fillStyle='#3ecf8e'; ctx.font='bold '+Math.max(9,Math.round(c*0.26))+'px system-ui,sans-serif'; ctx.textAlign='left'; ctx.textBaseline='bottom'; ctx.fillText('RADAR · '+rv.contacts.length+' contact'+(rv.contacts.length===1?'':'s')+' · '+Math.ceil(left/1000)+'s', r.x+2, r.y-2);
     ctx.restore();
   }
+  // Move handles: big tap targets showing every legal move of the selected ship (straight arrows slide, curved arrows rotate about the stern).
+  function drawHandles(o){
+    const ctx=o.ctx, c=o.cell; if(!o.handles||!o.handles.length) return;
+    o.handles.forEach(hd=>{ const p=o.cellCenter(hd.cell); const r=c*0.43; const rot=hd.type==='rotcw'||hd.type==='rotccw';
+      ctx.save(); ctx.translate(p.x,p.y); ctx.fillStyle=hd.active?'#3ecf8e':'#ffb347'; ctx.strokeStyle='#0b1520'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.arc(0,0,r,0,TAU); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle='#1a1200'; ctx.fillStyle='#1a1200'; ctx.lineWidth=Math.max(2,c*0.09); ctx.lineCap='round'; ctx.lineJoin='round';
+      if(hd.active){ ctx.beginPath(); ctx.moveTo(-r*0.45,0); ctx.lineTo(-r*0.1,r*0.35); ctx.lineTo(r*0.5,-r*0.35); ctx.stroke(); }
+      else if(!rot){ ctx.rotate(hd.ang); ctx.beginPath(); ctx.moveTo(-r*0.5,0); ctx.lineTo(r*0.3,0); ctx.stroke(); ctx.beginPath(); ctx.moveTo(r*0.6,0); ctx.lineTo(r*0.1,-r*0.4); ctx.lineTo(r*0.1,r*0.4); ctx.closePath(); ctx.fill(); }
+      else { const cw=hd.type==='rotcw'; ctx.rotate(hd.ang); const a0=cw?-2.5:2.5, a1=cw?0.7:-0.7; ctx.beginPath(); ctx.arc(0,0,r*0.46,a0,a1,!cw); ctx.stroke(); ctx.save(); ctx.translate(Math.cos(a1)*r*0.46,Math.sin(a1)*r*0.46); ctx.rotate(a1+(cw?Math.PI/2:-Math.PI/2)); ctx.beginPath(); ctx.moveTo(r*0.36,0); ctx.lineTo(-r*0.12,-r*0.32); ctx.lineTo(-r*0.12,r*0.32); ctx.closePath(); ctx.fill(); ctx.restore(); }
+      ctx.restore();
+      if(rot||hd.active){ ctx.font='bold '+Math.max(7,Math.round(c*0.2))+'px system-ui,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; const label=hd.active?'TAP AGAIN':'ENDS TURN'; const tw=ctx.measureText(label).width+6; let ly=p.y+r+c*0.17; if(ly>o.h-c*0.2) ly=p.y-r-c*0.17; const lx=Math.min(o.w-tw/2-2,Math.max(o.margin+tw/2,p.x)); ctx.fillStyle='rgba(10,10,14,0.85)'; ctx.fillRect(lx-tw/2,ly-c*0.14,tw,c*0.28); ctx.fillStyle=hd.active?'#8ef0b8':'#ffd27a'; ctx.fillText(label,lx,ly); } });
+  }
   function drawHighlights(o){
     const ctx=o.ctx, c=o.cell;
     const areaBox=(area,fill,stroke)=>{ const r=o.cellRect({x:area.x,y:area.y}); ctx.fillStyle=fill; ctx.fillRect(r.x,r.y,area.size*c,area.size*c); ctx.strokeStyle=stroke; ctx.lineWidth=2; ctx.setLineDash([6,4]); ctx.strokeRect(r.x+1,r.y+1,area.size*c-2,area.size*c-2); ctx.setLineDash([]); };
@@ -2214,7 +2226,7 @@ const Render = (function(){
       o.fleet.forEach((s,i)=>{ if(!s.bow) return; const fx=o.shipFx[i]; if(fx&&fx.hidden) return; drawShipTop(o,s,o.navyId,t,{selected:o.selected===i,turn:o.turn,sinkP:fx&&fx.sinkP!=null?fx.sinkP:null,sinkBowFirst:fx?fx.bowFirst:false,offset:fx?fx.offset:null,angleOffset:fx?fx.angleOffset:0}); });
     }
     if(o.ghost) drawShipTop(o,o.ghost,o.navyId,t,{ghost:true,ghostOk:o.ghostOk,noState:true});
-    drawHighlights(o); drawRadarView(o,t);
+    drawHighlights(o); drawHandles(o); drawRadarView(o,t);
     // effects
     if(o.effects.length){ const keep=[]; for(const e of o.effects){ const p=(t-e.t0)/e.dur; if(p>=1){ if(e.onEnd) e.onEnd(); continue; } ctx.save(); try{ e.draw(ctx,Math.max(0,p),o,t); }catch(err){ console.error(err); } ctx.restore(); keep.push(e); } o.effects=keep; }
   }
