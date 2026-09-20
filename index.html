@@ -1780,7 +1780,7 @@ const Store = (function(){
   const KEY = room => 'underway:'+String(room).toUpperCase();
   const SETTINGS_KEY = 'underway:settings';
   const LAST_KEY = 'underway:last';
-  const DEFAULT_SETTINGS = { volume:0.7, mute:false, voice:false, fast:false, reduced:false, ambient:false, name:'' };
+  const DEFAULT_SETTINGS = { volume:0.7, mute:false, voice:false, fast:false, reduced:false, ambient:false, vibrate:true, autoContinue:false, name:'' };
   function sanitizeGame(game, role){
     // Strip anything about the opponent that has not been legitimately revealed.
     const g = Rules.clone(game);
