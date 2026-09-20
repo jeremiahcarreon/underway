@@ -49,6 +49,16 @@ WebSockets pass through Caddy and Cloudflare without extra configuration.
 18. **Weapons.** Machine-gun bullets and air-strike bombs are recorded as individual shots (they count in shots fired and accuracy). A defender's device stores the opponent's mine positions because it must resolve movement silently; the UI never shows them. Radar contacts are never written to the log or the save. Admiral and Fleet Admiral use the weapons the game enables; the AI's moves set off your mines.
 19. **Seeded RNG.** Fleet templates, random fleets, AI, and the coin flip use a seeded generator; radio chatter picks use plain randomness because tests never depend on them.
 
+## Controls
+
+Everything during a battle happens in the **action tray** under the map; nothing covers the map, and nothing needs scrolling. The rule is the same everywhere: **tap to select, tap again to confirm** (or use the tray button).
+
+- **① Move (optional).** Tap one of your ships. Arrows appear on the map for every legal move: straight arrows slide it one cell ahead or astern, curved arrows swing the bow about the stern and are tagged ENDS TURN. Tap an arrow to preview the result, tap it again (or Confirm) to move. Moves that are not legal are not offered, and the tray says why. **② Attack** skips moving; nothing is lost by looking first.
+- **② Attack.** Tap a square, then tap the same square again (or FIRE). The weapon button opens the weapon list with status and a one-line description; the machine gun and radar ask which ship inside that list. Torpedo and air strike show their direction choices in the tray after you pick a square. The machine gun numbers its squares and fires from the tray.
+- **Results** stay in the tray as a card with **↻ Replay** until the next action (or OK). Radio chatter goes to the battle log on phones. An optional setting dismisses result cards automatically.
+- On a phone the top bar is one line; game code, share, settings, fleet/tally/log and surrender live behind **⋯**. Five ship markers along the tray show damage at a glance (tap one to select that ship).
+- The first game under a new control scheme shows three short tips. They are recorded per Admiral on the server (per device when signed out), so every Admiral, including those created earlier, sees them once. **⋯ → Show the quick tips again** brings them back.
+
 ## Game options
 
 The base game is the classic grid game plus movement: shells only. Everything else is optional per game. The host (or Player 1 in solo and hotseat) sets the options in the lobby; the guest sees them. Presets: **Classic + movement** (shells only), **Full arsenal** (all five extra weapons), **Arsenal + navy abilities**. Options travel with the game, are saved with it, and are recorded on the server. Default for a new game: full arsenal, navy abilities off.
@@ -94,9 +104,9 @@ Reloads count your own turns and tick down at the start of each of your turns. W
 3. Host picks Japan; guest sees Japan marked TAKEN. Guest picks Japan at the same instant (or before the lobby update lands): guest gets "That navy is taken by the host" and must re-pick; Random navy picks from the rest.
 4. Placement: tap a ship, tap a cell (bow), tap the ship again to cycle heading, drag to move. Try placing over another ship or off the edge: refused with reason. Random fleet, Perimeter, Cluster, Spread all place a legal fleet; adjust one, press Ready.
 5. Both screens play the same coin flip and land on the same navy; the named player has the first turn.
-6. Advance/Reverse a ship: it slides one cell with a wake; the opponent's screen shows nothing and receives no message (network tab).
-7. Rotate CW/CCW: the stern cell stays fixed, the bow sweeps a curved wake, the turn ends without a shot. A damaged ship's rotate buttons are disabled with "Damaged ships cannot rotate".
-8. Move toward the edge, toward another own ship, or toward a wreck: the ship shakes, buzzes, and a one-line reason appears ("Off the board", "Blocked by …", "Blocked by wreck", "Crippled").
+6. Tap a ship, tap the arrow ahead or astern, tap it again (or Confirm): it slides one cell with a wake; the opponent's screen shows nothing and receives no message (network tab).
+7. Curved arrows rotate: the stern cell stays fixed, the bow sweeps a curved wake, the turn ends without a shot. A damaged ship shows no curved arrows and the tray says "rotate: Damaged ships cannot rotate".
+8. Select a ship at the edge, next to another own ship, or next to a wreck: the blocked arrow is missing and the tray gives the reason ("Off the board", "Blocked by …", "Blocked by wreck"); a crippled ship says "Dead in the water — cannot move".
 9. Fire at empty water: shell arc, whistle, splash column, ripples, "Miss".
 10. Fire on a ship: flash, fireball, debris, shake; callout says "Hit: <class>" only. Peg shows class icon and turn number.
 11. Hit a stern: klaxon, secondary explosion, oil slick, "Crippled: dead in the water" on both screens; the defender's ship loses its wake and shows the badge. Repeat for every class.
@@ -115,5 +125,5 @@ Reloads count your own turns and tick down at the start of each of your turns. W
 24. Versus AI on Hunter, Admiral and Fleet Admiral each play to completion; Hunter keeps a static fleet and fires shells only, Admiral (the default) re-fires hit cells to confirm, moves damaged ships, lays mines at the ends of a damaged ship's line and machine-guns around a lone hit, Fleet Admiral adds a probability map, radar sweeps, torpedoes and air strikes.
 25. Hotseat: a curtain hides both oceans between placement and every turn.
 26. `?test=1` shows every case PASS (58 cases).
-27. On a phone in portrait: no horizontal scrolling, cells at least 32 px, tabs switch oceans, tap a cell then tap FIRE.
+27. On a phone in portrait: no scrolling in either direction during a turn, cells at least 32 px, ① Move / ② Attack switch oceans, tap a square then tap it again (or FIRE).
 28. No trademarked title, logo or artwork anywhere in the UI.
