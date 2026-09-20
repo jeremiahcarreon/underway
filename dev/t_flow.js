@@ -43,7 +43,10 @@ async function run(mobile){
   await tapEnemy(b,P(1,1),mobile?'touch':'mouse'); await b.wait(450); await tapEnemy(b,P(1,1),mobile?'touch':'mouse'); s=await settle(b); await b.wait(300); console.log(tag+'radar by tap-tap: sweeps', await b.eval(`Underway.UI.S.game.log.filter(e=>e.kind==='radar').map(e=>e.area.size+'x'+e.area.size).join(',')`));
   if(mobile){ await b.click('#btn-menu'); await b.wait(150); await b.shot(__dirname+'/f9_menu.png'); await b.click('#m-drawer'); await b.wait(300); console.log(tag+'drawer shows log:', await b.eval(`document.getElementById('log').offsetParent!==null`)); await b.click('#btn-menu'); await b.wait(100); await b.click('#m-drawer'); }
   // coach: finish remaining tips, confirm the server recorded it, new game shows none; "show tips again" restores them
-  for(let i=0;i<3;i++){ if(await b.eval(`!document.getElementById('tray-coach').classList.contains('hidden')`)) await b.click('#coach-ok'); await b.click(i%2?'#tab-own':'#tab-enemy'); await b.wait(120); }
+  // finish whatever tips are left: the rotation tip needs a selected ship that can rotate
+  if(await b.eval(`Underway.UI.S.coach.needed && !Underway.UI.S.coach.seen.rotate`)){ await showTab(b,'own'); for(let i=0;i<5;i++){ await selectShip(b,i); if((await legalMoves(b)).some(m=>m.startsWith('rot'))) break; } console.log(tag+'rotation tip:', (await tray(b)).coach); }
+  for(let i=0;i<4;i++){ if(await b.eval(`!document.getElementById('tray-coach').classList.contains('hidden')`)) await b.click('#coach-ok'); await b.click(i%2?'#tab-own':'#tab-enemy'); await b.wait(120); }
+  console.log(tag+'coach finished:', await b.eval(`JSON.stringify(Underway.UI.S.coach)`));
   await sleep(500); const me=await (await fetch(URL+'api/me?token='+encodeURIComponent(await b.eval(`Underway.UI.S.admiral.token`)))).json(); console.log(tag+'server coach version:', me.coach);
   console.log(tag+'ERRORS:', b.errors.length?b.errors:'none'); return b;
 }
