@@ -33,5 +33,26 @@ class Browser{
 }
 async function cellXY(b, ocean, cell){ return b.eval(`(()=>{const o=Underway.UI.S.oceans.${ocean}; const r=o.canvas.getBoundingClientRect(); const p=o.cellCenter(${JSON.stringify(cell)}); return {x:p.x*(r.width/o.w), y:p.y*(r.height/o.h)};})()`); }
 async function waitFor(b, expr, ms, label){ const t0=Date.now(); while(Date.now()-t0<ms){ try{ if(await b.eval(expr)) return true; }catch(e){} await b.wait(150); } throw new Error('timeout waiting: '+(label||expr)); }
-async function selectShip(b,i){ return b.eval(`(()=>{const s=document.getElementById('ship-select'); s.value='${i}'; s.dispatchEvent(new Event('change')); return s.value;})()`); }
-module.exports={Browser, cellXY, waitFor, selectShip, URL:'file:///home/jeremiah/projects/Underway/index.html'};
+module.exports={Browser, cellXY, waitFor, URL:'file:///home/jeremiah/projects/Underway/index.html'};
+
+/* ---- UI helpers for the action-tray controls (tap to select, tap again / tray button to confirm) ---- */
+async function tapEnemy(b, cell, type){ const xy=await cellXY(b,'enemy',cell); await b.clickCanvas('#enemyCanvas',xy.x,xy.y,type||'mouse'); await b.wait(60); }
+async function tapOwn(b, cell, type){ const xy=await cellXY(b,'own',cell); await b.clickCanvas('#ownCanvas',xy.x,xy.y,type||'mouse'); await b.wait(60); }
+async function showTab(b, t){ if((await b.eval(`Underway.UI.S.tab`))!==t){ await b.click('#tab-'+t); await b.wait(100); } }
+// Arm a weapon through the tray chip and the weapon sheet. shipIdx picks the firing/scanning ship for the machine gun and radar.
+async function pickWeapon(b, id, shipIdx){
+  await showTab(b,'enemy'); await b.click('#tray-weapon'); await b.wait(120);
+  const st=await b.eval(`(()=>{ const row=document.querySelector('.wrow[data-weapon="${id}"] .wsheet-row'); if(!row) return 'missing'; if(row.disabled) return 'disabled'; row.click(); return 'ok'; })()`); await b.wait(100);
+  if(st==='ok'&&await b.eval(`!!document.querySelector('.wrow[data-weapon="${id}"] .wsheet-opt')`)){ await b.eval(`(()=>{ const o=[...document.querySelectorAll('.wrow[data-weapon="${id}"] .wsheet-opt')]; const want=${shipIdx==null?-1:shipIdx}; const el=(want>=0&&o[want]&&!o[want].disabled)?o[want]:o.find(x=>!x.disabled); if(el) el.click(); })()`); await b.wait(100); }
+  if(await b.eval(`document.getElementById('ov-weapons').classList.contains('active')`)) await b.click('#wsheet-close');
+  return st==='ok' ? b.eval(`Underway.UI.S.weapon`) : st;
+}
+async function fire(b){ return b.click('#tray-fire'); }
+// Select one of your own ships through its marker in the tray (robust against move handles overlapping other ships).
+async function selectShip(b, i){ await showTab(b,'own'); await b.click('#tray-fleet .pip:nth-child('+(i+1)+')'); await b.wait(80); return i; }
+async function legalMoves(b){ return b.eval(`(Underway.UI.S.oceans.own.handles||[]).map(h=>h.type)`); }
+// Selected ship: tap the move handle on the map, then confirm ('tray' = Confirm button, 'tap' = tap the handle again). False when that move is not offered.
+async function moveShip(b, type, how){ const cell=await b.eval(`(()=>{ const h=(Underway.UI.S.oceans.own.handles||[]).find(x=>x.type==='${type}'); return h?h.cell:null; })()`); if(!cell) return false; await tapOwn(b,cell); if(how==='tap') await tapOwn(b,cell); else await b.click('#tray-confirm'); return true; }
+async function setLane(b, k){ return b.click('.lane-chip[data-dir="'+k+'"]'); }
+async function setLine(b, horizontal){ return b.click('.line-chip[data-h="'+(horizontal?1:0)+'"]'); }
+Object.assign(module.exports,{tapEnemy,tapOwn,showTab,pickWeapon,fire,selectShip,legalMoves,moveShip,setLane,setLine});
