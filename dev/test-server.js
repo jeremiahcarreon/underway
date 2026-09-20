@@ -64,6 +64,9 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   const lb2=(await get('/api/leaderboard')).body; const ai=lb2.vsAI.find(x=>x.name==='Alice'); check(ai&&ai.wins===1&&ai.losses===1&&ai.levels.admiral.wins===1&&ai.levels.hunter.losses===1,'versus-AI record by level', lb2.vsAI);
   check(lb2.admirals.find(a=>a.name==='Alice').wins===1,'solo wins do not touch the PvP ranking (still the one PvP win)'); check(!!(lb2.notes&&lb2.notes.ranking),'leaderboard carries an explicit note');
   const sget=await get('/api/solo/AIQQ11?token='+A.token); check(sget.status===200&&sget.body.blob.game.turn===30,'solo blob retrievable for replay/resume'); check((await get('/api/solo/AIQQ11')).status===401,'solo blob needs a token'); check((await get('/api/solo/AIQQ11?token='+B.token)).status===404,'solo blob is private to its admiral');
+  // coach marks: every Admiral starts at 0 (so existing accounts see the tips once), the client records completion
+  check((await get('/api/me?token='+A.token)).body.coach===0,'admiral starts with coach version 0');
+  check((await post('/api/admiral/coach',{token:A.token,version:2})).body.coach===2,'coach version stored'); check((await get('/api/me?token='+A.token)).body.coach===2,'coach version returned by /api/me'); check((await post('/api/admiral',{name:'Alice',pin:'1234'})).body.coach===2,'sign-in reports coach version'); check((await get('/api/me?token='+B.token)).body.coach===0,'other admirals unaffected'); check((await post('/api/admiral/coach',{token:'nope',version:2})).status===401,'coach update needs a token');
   check((await get('/api/games/ZZZZZZ')).status===404,'unknown code 404');
   check((await fetch(BASE+'/')).status===200 && (await (await fetch(BASE+'/')).text()).includes('UNDERWAY'),'serves index.html');
   a.close(); b.close();
