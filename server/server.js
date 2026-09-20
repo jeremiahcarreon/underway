@@ -27,12 +27,15 @@ CREATE TABLE IF NOT EXISTS solo_games(admiral_id INTEGER NOT NULL, code TEXT NOT
 CREATE TABLE IF NOT EXISTS player_state(game_code TEXT NOT NULL, role TEXT NOT NULL, last_seq_in INTEGER NOT NULL DEFAULT 0, blob TEXT, updated_at INTEGER NOT NULL, PRIMARY KEY(game_code, role));
 `);
 try { db.exec('ALTER TABLE games ADD COLUMN options TEXT'); } catch (e) { /* column exists */ }
+// coach_version: which one-time gameplay tips an Admiral has finished. Existing Admirals start at 0, so everyone sees the tips for a new control scheme once.
+try { db.exec('ALTER TABLE admirals ADD COLUMN coach_version INTEGER NOT NULL DEFAULT 0'); } catch (e) { /* column exists */ }
 const q = {
   admiralByName: db.prepare('SELECT * FROM admirals WHERE name = ?'),
   admiralByToken: db.prepare('SELECT * FROM admirals WHERE token = ?'),
   admiralById: db.prepare('SELECT id, name FROM admirals WHERE id = ?'),
   insertAdmiral: db.prepare('INSERT INTO admirals(name, pin_hash, salt, token, created_at, last_seen) VALUES (?,?,?,?,?,?)'),
   touchAdmiral: db.prepare('UPDATE admirals SET last_seen = ? WHERE id = ?'),
+  setCoach: db.prepare('UPDATE admirals SET coach_version = ? WHERE id = ?'),
   game: db.prepare('SELECT * FROM games WHERE code = ?'),
   insertGame: db.prepare('INSERT INTO games(code, status, host_id, created_at, rematch_of) VALUES (?,?,?,?,?)'),
   setGuest: db.prepare('UPDATE games SET guest_id = ? WHERE code = ? AND guest_id IS NULL'),
@@ -131,17 +134,21 @@ async function api(req, res, u) {
     if (!/^\d{4,8}$/.test(pin)) return json(res, 400, { error: 'PIN must be 4 to 8 digits' });
     const key = name.toLowerCase(); if (throttled(key)) return json(res, 429, { error: 'Too many wrong PINs. Try again in 10 minutes.' });
     let a = q.admiralByName.get(name);
-    if (a) { if (hashPin(pin, a.salt) !== a.pin_hash) { noteFailure(key); return json(res, 401, { error: 'Wrong PIN for that Admiral name' }); } q.touchAdmiral.run(now(), a.id); return json(res, 200, { name: a.name, token: a.token, created: false }); }
+    if (a) { if (hashPin(pin, a.salt) !== a.pin_hash) { noteFailure(key); return json(res, 401, { error: 'Wrong PIN for that Admiral name' }); } q.touchAdmiral.run(now(), a.id); return json(res, 200, { name: a.name, token: a.token, created: false, coach: a.coach_version || 0 }); }
     const salt = crypto.randomBytes(16).toString('hex'); const token = newToken();
     q.insertAdmiral.run(name, hashPin(pin, salt), salt, token, now(), now());
-    return json(res, 201, { name, token, created: true });
+    return json(res, 201, { name, token, created: true, coach: 0 });
+  }
+  if (m === 'POST' && p === '/api/admiral/coach') {
+    const b = await readBody(req); const a = authToken(b.token); if (!a) return json(res, 401, { error: 'Sign in first' });
+    const v = Math.max(0, Math.min(1000, parseInt(b.version, 10) || 0)); q.setCoach.run(v, a.id); return json(res, 200, { coach: v });
   }
   if (m === 'GET' && p === '/api/me') {
     const a = authToken(u.searchParams.get('token')); if (!a) return json(res, 401, { error: 'Sign in first' });
     const games = q.myGames.all(a.id, a.id).map(g => Object.assign(publicGame(g), { role: roleOf(g, a.id), kind: 'pvp' }));
     const solo = q.soloList.all(a.id).map(r => ({ code: r.code, kind: r.mode === 'ai' ? 'ai' : 'hotseat', status: r.status, aiLevel: r.ai_level, hostNavy: r.navy, guestNavy: r.opp_navy, winner: r.winner, turns: r.turns, options: safeParse(r.options), createdAt: r.created_at, updatedAt: r.updated_at, role: 'host', host: a.name, guest: r.mode === 'ai' ? ('Admiral AI · ' + (r.ai_level || 'admiral')) : 'Player 2 (hotseat)' }));
     const all = games.concat(solo).sort((x, y) => (y.updatedAt || y.finishedAt || y.createdAt || 0) - (x.updatedAt || x.finishedAt || x.createdAt || 0));
-    return json(res, 200, { name: a.name, games: all });
+    return json(res, 200, { name: a.name, coach: a.coach_version || 0, games: all });
   }
   if (m === 'POST' && p === '/api/solo/save') {
     const b = await readBody(req); const a = authToken(b.token); if (!a) return json(res, 401, { error: 'Sign in first' });
