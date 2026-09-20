@@ -3873,14 +3873,24 @@ const Tests = (function(){
     const run=()=>{ let g=Rules.createGame({room:'AI0002',mode:'ai',aiLevel:'admiral',seed:5}); const rng=RNG(5); g=Rules.setFleet(g,'host',Rules.randomFleet(rng)).game; g=Rules.setFleet(g,'guest',AI.placeFleet(rng)).game; g=Rules.startBattle(g,'guest'); g.ai=AI.initMemory('admiral'); for(let i=0;i<6;i++){ g=AI.takeTurn(g,'guest',rng).game; if(g.current==='host') g=Rules.fire(g,'host',P(i,i)).game; } return JSON.stringify(g.players.guest.shots); };
     eq(run(),run());
   });
-  test('AI Admiral re-fires the anchor to confirm after a bracket miss, then extends along the axis', ()=>{
+  test('AI Admiral: brackets both ends first, then re-fires the hit to learn whether the ship moved, then pursues along the axis', ()=>{
     const mem=AI.initMemory('admiral'); const rng=RNG(1);
     const shots=[{turn:1,cell:P(5,5),result:'hit',cls:'destroyer'},{turn:3,cell:P(5,6),result:'hit',cls:'destroyer'},{turn:5,cell:P(5,7),result:'miss',cls:null}];
-    const c=AI.admiralShot(shots,mem,rng); eq(c,P(5,6),'re-fires the hit next to the miss'); eq(mem.chase.stage,'confirm'); eq(mem.chase.axis,'y');
-    shots.push({turn:7,cell:P(5,6),result:'miss',cls:null});
-    const c2=AI.admiralShot(shots,mem,rng); eq(mem.chase.stage,'pursue'); ok(c2.x===5 && [3,4,7,8].includes(c2.y),'extends along the axis: '+JSON.stringify(c2));
-    // a CONFIRMED anchor means the ship stayed: the chase is dropped and the anchor is not re-checked for a while
-    const mem2=AI.initMemory('admiral'); const s2=shots.slice(0,3); AI.admiralShot(s2,mem2,rng); s2.push({turn:7,cell:P(5,6),result:'confirmed',cls:'destroyer'}); const c3=AI.admiralShot(s2,mem2,rng); ok(mem2.chase===null); ok(!(c3.x===5&&c3.y===6),'does not re-fire the confirmed anchor');
+    eq(AI.admiralShot(shots,mem,rng),P(5,4),'other end of the line first'); shots.push({turn:7,cell:P(5,4),result:'miss',cls:null});
+    const c=AI.admiralShot(shots,mem,rng); eq(c,P(5,6),'both ends missed: re-fire the latest hit'); eq(mem.chase.stage,'confirm'); eq(mem.chase.axis,'y');
+    shots.push({turn:9,cell:P(5,6),result:'miss',cls:null});
+    const c2=AI.admiralShot(shots,mem,rng); eq(mem.chase.stage,'pursue'); ok(c2.x===5&&[2,3,8,9].includes(c2.y),'pursues along the axis: '+JSON.stringify(c2));
+    const mem2=AI.initMemory('admiral'); const s2=shots.slice(0,4); AI.admiralShot(s2,mem2,rng); s2.push({turn:9,cell:P(5,6),result:'confirmed',cls:'destroyer'}); const c3=AI.admiralShot(s2,mem2,rng); ok(mem2.chase===null); ok(!(c3.x===5&&c3.y===6),'does not re-fire the confirmed square again');
+  });
+  test('AI never loops: against a fleet that does not move, Admiral and Fleet Admiral win and rarely repeat a square', ()=>{
+    ['admiral','fleet'].forEach(level=>{ let g=Rules.createGame({room:'AI0009',mode:'ai',aiLevel:level,seed:3}); const rng=RNG(3); g=Rules.setFleet(g,'host',Rules.templateFleet('perimeter')).game; g=Rules.setFleet(g,'guest',AI.placeFleet(rng)).game; g=Rules.startBattle(g,'guest'); g.ai=AI.initMemory(level);
+      let guard=0; while(!g.winner&&guard++<400){ if(g.current==='guest') g=AI.takeTurn(g,'guest',rng).game; else g=Rules.fire(g,'host',{x:guard%10,y:9}).game; }
+      eq(g.winner,'guest',level+' wins'); const sh=g.players.guest.shots.filter(x=>x.weapon==='shell'); const distinct=new Set(sh.map(x=>x.cell.x+','+x.cell.y)).size; ok(distinct>=sh.length*0.85, level+' repeats too much: '+distinct+'/'+sh.length); ok(sh.length<90, level+' took '+sh.length+' shells'); });
+  });
+  test('AI Fleet Admiral attacks a ship that revealed itself (machine gun or air strike) on its next turn', ()=>{
+    let g=Rules.createGame({room:'AI0010',mode:'ai',aiLevel:'fleet',seed:4}); const rng=RNG(4); g=Rules.setFleet(g,'host',Rules.templateFleet('spread')).game; g=Rules.setFleet(g,'guest',AI.placeFleet(rng)).game; g=Rules.startBattle(g,'host'); g.ai=AI.initMemory('fleet');
+    const r=Rules.fireMG(g,'host',{shipIdx:1,cells:[P(0,0),P(1,0),P(2,0),P(3,0)]}); ok(r.ok,r.reason); const bb=Rules.shipCells(r.game.players.host.fleet[1]).map(c=>c.x+','+c.y);
+    const c=AI.fleetShot(r.game,'guest',r.game.ai,rng); ok(bb.includes(c.x+','+c.y),'targets the battleship that fired: '+JSON.stringify(c));
   });
   test('AI Admiral moves a damaged ship away from the hit when legal', ()=>{
     let g=localGame(3); g.aiLevel='admiral'; g.ai=AI.initMemory('admiral'); g.mode='ai';
