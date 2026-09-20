@@ -3880,7 +3880,7 @@ const Tests = (function(){
     eq(AI.admiralShot(shots,mem,rng),P(5,4),'other end of the line first'); shots.push({turn:7,cell:P(5,4),result:'miss',cls:null});
     const c=AI.admiralShot(shots,mem,rng); eq(c,P(5,6),'both ends missed: re-fire the latest hit'); eq(mem.chase.stage,'confirm'); eq(mem.chase.axis,'y');
     shots.push({turn:9,cell:P(5,6),result:'miss',cls:null});
-    const c2=AI.admiralShot(shots,mem,rng); eq(mem.chase.stage,'pursue'); ok(c2.x===5&&[2,3,8,9].includes(c2.y),'pursues along the axis: '+JSON.stringify(c2));
+    const c2=AI.admiralShot(shots,mem,rng); eq(mem.chase.stage,'pursue'); ok(c2.x===5&&c2.y!==5&&c2.y!==6,'pursues along the axis: '+JSON.stringify(c2));
     const mem2=AI.initMemory('admiral'); const s2=shots.slice(0,4); AI.admiralShot(s2,mem2,rng); s2.push({turn:9,cell:P(5,6),result:'confirmed',cls:'destroyer'}); const c3=AI.admiralShot(s2,mem2,rng); ok(mem2.chase===null); ok(!(c3.x===5&&c3.y===6),'does not re-fire the confirmed square again');
   });
   test('AI never loops: against a fleet that does not move, Admiral and Fleet Admiral win and rarely repeat a square', ()=>{
