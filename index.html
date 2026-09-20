@@ -2679,7 +2679,7 @@ const UI = (function(){
   function renderConn(st, detail){
     const opp=S.oppOnline?' · opponent online':' · opponent away';
     const label={init:'offline',connecting:'connecting…',online:'connected'+opp,reconnecting:'reconnecting…',error:'error',closed:'offline',offline:'offline'}[st]||st;
-    ['#lobby-conn','#place-conn','#battle-conn','#battle-conn-m'].forEach(sel=>{ const el=$(sel); if(!el) return; el.className='conn '+(st==='online'?'online':st==='reconnecting'||st==='connecting'?'reconnecting':'offline'); el.querySelector('.txt').textContent=S.mode==='net'?label+(detail&&st!=='online'?' ('+detail+')':''):(S.mode==='ai'?'versus AI':S.mode==='hotseat'?'hotseat':''); });
+    ['#lobby-conn','#place-conn','#battle-conn','#battle-conn-m'].forEach(sel=>{ const el=$(sel); if(!el) return; if(sel==='#battle-conn-m') el.hidden=S.mode!=='net'; el.className='conn '+(st==='online'?'online':st==='reconnecting'||st==='connecting'?'reconnecting':'offline'); el.querySelector('.txt').textContent=S.mode==='net'?label+(detail&&st!=='online'?' ('+detail+')':''):(S.mode==='ai'?'versus AI':S.mode==='hotseat'?'hotseat':''); });
   }
   function showError(title, text, retry){ $('#error-title').textContent=title; $('#error-text').textContent=text; $('#error-retry').classList.toggle('hidden',!retry); overlay('ov-error',true); }
   function handleMessage(type, p, env){
@@ -3108,7 +3108,7 @@ const UI = (function(){
     $('#tab-own').textContent=mine?(g.phase==='maneuver'?'① Move':'① Moved ✓'):'Your ocean'; $('#tab-enemy').textContent=mine?'② Attack':'Enemy waters';
     $('#btn-surrender').disabled=!!g.winner; $('#m-surrender').disabled=!!g.winner;
     renderFleetPips(); renderResult(); renderCoach();
-    const big=$('#tray-big'), sub=$('#tray-sub'), btns=$('#tray-btns'); btns.innerHTML=''; const set=(b,t)=>{ big.textContent=b; sub.textContent=t; };
+    const big=$('#tray-big'), sub=$('#tray-sub'), btns=$('#tray-btns'), chips=$('#tray-chips'); btns.innerHTML=''; chips.innerHTML=''; chips.classList.add('hidden'); const set=(b,t)=>{ big.textContent=b; sub.textContent=t; };
     if(g.winner) set('Battle over','');
     else if(S.busy) set('…','Tap the map to skip the animation');
     else if(!mine) set('Enemy turn','Their action plays on your ocean.');
@@ -3125,8 +3125,8 @@ const UI = (function(){
     } else {
       const a=aimInfo(); set(a.big,a.sub); const av=weaponAvailability(S.weapon);
       btns.appendChild(trayButton(WEAPONS[S.weapon].short+' ▾','chip',openWeaponSheet,'tray-weapon'));
-      if(S.weapon==='airstrike'&&S.target) [[true,'↔'],[false,'↕']].forEach(([v,l])=>{ const c=trayButton(l,'chip line-chip'+(S.airDir===v?' selected':''),()=>{ S.airDir=v; syncTargets(); renderActions(); }); c.dataset.h=v?'1':'0'; btns.appendChild(c); });
-      if(S.weapon==='torpedo'&&S.target) LANE_MODES.forEach((m,k)=>{ const c=trayButton(m.label.split(' ')[0],'chip lane-chip'+(S.torpDir%4===k?' selected':''),()=>{ S.torpDir=k; syncTargets(); renderActions(); }); c.dataset.dir=String(k); btns.appendChild(c); });
+      if(S.weapon==='airstrike'&&S.target){ chips.classList.remove('hidden'); chips.innerHTML='<span class="lbl">Bomb line</span>'; [[true,'↔ across'],[false,'↕ down']].forEach(([v,l])=>{ const c=trayButton(l,'chip line-chip'+(S.airDir===v?' selected':''),()=>{ S.airDir=v; syncTargets(); renderActions(); }); c.dataset.h=v?'1':'0'; chips.appendChild(c); }); }
+      if(S.weapon==='torpedo'&&S.target){ chips.classList.remove('hidden'); chips.innerHTML='<span class="lbl">Runs</span>'; LANE_MODES.forEach((m,k)=>{ const c=trayButton(m.label.split(' ')[0],'chip lane-chip'+(S.torpDir%4===k?' selected':''),()=>{ S.torpDir=k; syncTargets(); renderActions(); }); c.dataset.dir=String(k); chips.appendChild(c); }); }
       if(S.target||S.targets.length) btns.appendChild(trayButton('✕','chip',()=>{ clearTargets(); renderActions(); },'tray-clear'));
       const fb=trayButton(FIRE_LABEL[S.weapon],'fire',()=>doFire(),'tray-fire'); fb.disabled=!(a.ready&&av.ok); btns.appendChild(fb);
     }
