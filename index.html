@@ -1458,7 +1458,7 @@ const Rules = (function(){
    ============================================================ */
 const AI = (function(){
   const key = cellKey;
-  function initMemory(level){ return { level:level||'hunter', parity:0, chase:null, confirmedAnchors:{}, confirmChecks:0, movesMade:0, pursuits:0 }; }
+  function initMemory(level){ return { level:level||'hunter', parity:0, chase:null, confirmed:{}, stale:{}, confirmChecks:0, movesMade:0, pursuits:0, contacts:[] }; }
   function shotMap(shots){ const m=new Map(); shots.forEach(s=>m.set(key(s.cell), s)); return m; }
   function neighbors(c){ return [{x:c.x+1,y:c.y},{x:c.x-1,y:c.y},{x:c.x,y:c.y+1},{x:c.x,y:c.y-1}].filter(Rules.inBounds); }
 
@@ -1503,94 +1503,82 @@ const AI = (function(){
     }
     return huntShot(shots, mem, rng);
   }
-  // Admiral: Hunter plus movement awareness.
-  //  * A damaged ship cannot rotate, so once two hits of one class align its axis is fixed: keep sweeping that line.
-  //  * Cells fired before the class's latest fresh HIT are "fresh" again (the ship may have moved into them).
-  //  * When a bracket shot misses next to a live hit, re-fire that hit: CONFIRMED = still there (try the other way),
-  //    MISS = it moved (pursue along the axis, away from the miss first).
-  function admiralShot(shots, mem, rng){
-    const taken=shotMap(shots); const last=shots[shots.length-1]; const turn=shots.length;
-    if(mem.chase && mem.chase.stage==='confirm' && last && key(last.cell)===mem.chase.anchorKey){
-      if(last.result===RESULT.MISS){ mem.chase.stage='pursue'; mem.chase.tried=[]; mem.pursuits++; }
-      else { mem.confirmedAnchors[mem.chase.anchorKey]=turn; mem.chase=null; }
-    } else if(mem.chase && mem.chase.stage==='confirm'){ mem.chase=null; }
-    if(mem.chase && mem.chase.stage==='pursue'){
-      if(last && last.result!==RESULT.MISS && last.cls===mem.chase.cls){ mem.chase=null; }
-      else {
-        const ch=mem.chase, a=ch.anchor, md=ch.missDir||{x:0,y:0}; const cands=[];
-        const dirs = ch.axis==='x' ? [{x:-md.x||-1,y:0},{x:md.x||1,y:0}] : ch.axis==='y' ? [{x:0,y:-md.y||-1},{x:0,y:md.y||1}] : [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
-        for(let d=1;d<=3;d++) dirs.forEach(dv=>cands.push({x:a.x+dv.x*d,y:a.y+dv.y*d}));
-        const ok=cands.filter(c=>Rules.inBounds(c)&&!ch.tried.includes(key(c))&&!(taken.has(key(c))&&taken.get(key(c)).turn>ch.sinceTurn)&&!(taken.has(key(c))&&taken.get(key(c)).result!==RESULT.MISS));
-        if(ok.length){ ch.tried.push(key(ok[0])); return ok[0]; }
-        mem.chase=null;
-      }
+  /* ---- Target mode shared by Admiral and Fleet Admiral: finish ships with live hits, and notice when one has moved ----
+     A square missed BEFORE the latest hit on that class is open again (the ship may have moved into it); a square missed after it is not.
+     When every sensible square around a damaged ship is exhausted, re-fire the hit square: CONFIRMED = still there, MISS = it moved,
+     and the hunt continues two squares out along its axis. Never loops: each class is confirmed at most once per 12 shots. */
+  function activeHits(shots, mem){ return liveHits(shots).filter(h=>!(mem.stale[key(h.cell)]>=h.turn)); }
+  function targetShot(shots, mem, rng){
+    const taken=shotMap(shots); const last=shots[shots.length-1]; const n=shots.length;
+    if(mem.chase&&mem.chase.stage==='confirm'){
+      if(last&&key(last.cell)===mem.chase.anchorKey){
+        if(last.result===RESULT.MISS){ const ch=mem.chase; ch.stage='pursue'; ch.left=4; mem.pursuits++; ch.line.forEach(c=>{ mem.stale[key(c)]=last.turn; }); }
+        else { mem.confirmed[mem.chase.cls]=n; mem.chase=null; }
+      } else mem.chase=null;
     }
-    const live=liveHits(shots);
-    // A follow-up MISS adjacent to a live hit: re-fire that hit to learn whether the ship moved.
-    if(last && last.result===RESULT.MISS && live.length){
-      const near=live.filter(h=>Math.abs(h.cell.x-last.cell.x)+Math.abs(h.cell.y-last.cell.y)===1);
-      for(const anchor of near){
-        const ak=key(anchor.cell);
-        if(mem.confirmedAnchors[ak]!=null && turn-mem.confirmedAnchors[ak]<6) continue;
-        const sameCls=live.filter(h=>h.cls===anchor.cls).map(h=>h.cell);
-        const axis=lineAxis(sameCls)||(last.cell.x===anchor.cell.x?'y':'x');
-        mem.chase={stage:'confirm', anchor:anchor.cell, anchorKey:ak, cls:anchor.cls, axis, line:sameCls.length?sameCls:[anchor.cell], sinceTurn:last.turn, missDir:{x:Math.sign(last.cell.x-anchor.cell.x),y:Math.sign(last.cell.y-anchor.cell.y)}};
-        mem.confirmChecks++;
-        return {x:anchor.cell.x, y:anchor.cell.y};
-      }
+    if(mem.chase&&mem.chase.stage==='pursue'){
+      const ch=mem.chase;
+      if((last&&last.cls===ch.cls&&last.result!==RESULT.MISS)||ch.left<=0) mem.chase=null;
+      else { const dirs=ch.axis==='x'?[{x:1,y:0},{x:-1,y:0}]:ch.axis==='y'?[{x:0,y:1},{x:0,y:-1}]:[{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}]; const cands=[];
+        for(let d=1;d<=3;d++) ch.line.forEach(c=>dirs.forEach(v=>cands.push({x:c.x+v.x*d,y:c.y+v.y*d})));
+        const ok=cands.filter(c=>Rules.inBounds(c)&&!ch.line.some(l=>key(l)===key(c))&&!(taken.has(key(c))&&(taken.get(key(c)).turn>=ch.sinceTurn||taken.get(key(c)).result!==RESULT.MISS)));
+        if(ok.length){ ch.left--; return ok[0]; } mem.chase=null; }
     }
-    // Freshness-aware bracket along the known axis.
-    if(live.length){
-      const byCls={}; live.forEach(s=>{ (byCls[s.cls]=byCls[s.cls]||[]).push(s); });
-      const latestTurn=cls=>Math.max(...byCls[cls].map(h=>h.turn));
-      const classes=Object.keys(byCls).sort((a,b)=>latestTurn(b)-latestTurn(a));
-      for(const cls of classes){
-        const hits=byCls[cls]; const cells=hits.map(h=>h.cell); const axis=lineAxis(cells);
-        const freshHits=shots.filter(s=>s.cls===cls&&s.result===RESULT.HIT); const latestHit=freshHits.length?Math.max(...freshHits.map(s=>s.turn)):0;
-        const recent=hits.slice().sort((a,b)=>b.turn-a.turn)[0].cell;
-        const cands=[]; const seen=new Set();
-        const push=(c,pri)=>{ if(!Rules.inBounds(c)) return; const k=key(c); if(seen.has(k)) return; if(cells.some(h=>key(h)===k)) return; const t=taken.get(k); if(t && t.result!==RESULT.MISS) return; if(t && t.turn>=latestHit) return; seen.add(k); cands.push({c,pri:pri+(t?0.5:0)}); };
-        if(axis){ const dirs=axis==='x'?[{x:1,y:0},{x:-1,y:0}]:[{x:0,y:1},{x:0,y:-1}]; for(let d=1;d<=3;d++) dirs.forEach(dv=>push({x:recent.x+dv.x*d,y:recent.y+dv.y*d},d)); cells.forEach(c=>dirs.forEach(dv=>push({x:c.x+dv.x,y:c.y+dv.y},1.25))); }
-        else neighbors(recent).forEach(c=>push(c,1));
-        if(cands.length){ cands.sort((a,b)=>a.pri-b.pri); const best=cands.filter(x=>x.pri===cands[0].pri); return rng.pick(best).c; }
-        const ak=key(recent);
-        if(!(mem.confirmedAnchors[ak]!=null && turn-mem.confirmedAnchors[ak]<4)){ mem.chase={stage:'confirm', anchor:recent, anchorKey:ak, cls, axis, line:cells, sinceTurn:turn, missDir:{x:0,y:0}}; mem.confirmChecks++; return {x:recent.x,y:recent.y}; }
-      }
+    const live=activeHits(shots, mem); if(!live.length) return null;
+    const byCls={}; live.forEach(h=>{ (byCls[h.cls]=byCls[h.cls]||[]).push(h); });
+    const classes=Object.keys(byCls).sort((a,b)=>byCls[b].length-byCls[a].length);
+    for(const cls of classes){
+      const hits=byCls[cls], cells=hits.map(h=>h.cell), axis=lineAxis(cells);
+      const lastHit=Math.max(...shots.filter(x=>x.cls===cls&&(x.result===RESULT.HIT||x.result===RESULT.GRAZE)).map(x=>x.turn));
+      const open=c=>{ if(!Rules.inBounds(c)||cells.some(h=>key(h)===key(c))) return false; const t=taken.get(key(c)); return !t||(t.result===RESULT.MISS&&t.turn<lastHit); };
+      let cands=[];
+      if(axis==='x'){ const y=cells[0].y, xs=cells.map(c=>c.x); cands=[{x:Math.max(...xs)+1,y},{x:Math.min(...xs)-1,y}]; }
+      else if(axis==='y'){ const x=cells[0].x, ys=cells.map(c=>c.y); cands=[{x,y:Math.max(...ys)+1},{x,y:Math.min(...ys)-1}]; }
+      else cells.forEach(c=>neighbors(c).forEach(v=>cands.push(v)));
+      cands=cands.filter(open); if(cands.length) return rng.pick(cands);
+      if(mem.confirmed[cls]!=null&&n-mem.confirmed[cls]<12) continue;   // checked recently: leave this one for now
+      const anchor=hits.slice().sort((a,b)=>b.turn-a.turn)[0].cell;
+      mem.chase={stage:'confirm', cls, anchor, anchorKey:key(anchor), axis, line:cells, sinceTurn:last?last.turn:0}; mem.confirmed[cls]=n; mem.confirmChecks++;
+      return {x:anchor.x,y:anchor.y};
     }
-    return huntShot(shots, mem, rng);
+    return null;
   }
-  /* ---- Fleet Admiral: probability map over placements consistent with recent evidence ---- */
-  function densityMap(game, pid, mem){
-    const p=game.players[pid]; const shots=p.shots; const turn=game.turn; const latest=new Map(); shots.forEach(s=>latest.set(key(s.cell),s));
-    const sunk=new Set(shots.filter(s=>s.result===RESULT.SUNK).map(s=>s.cls)); const wreck=new Set(); shots.filter(s=>s.result===RESULT.SUNK&&s.footprint).forEach(s=>s.footprint.forEach(c=>wreck.add(key(c))));
-    const isHitLike=s=>s&&(s.result===RESULT.HIT||s.result===RESULT.CONFIRMED||s.result===RESULT.GRAZE);
-    const contacts=(mem.contacts||[]).filter(c=>turn-c.turn<=4);
+  // Hunt with memory: never-shot squares first (checkerboard), then the oldest misses.
+  function patientHunt(shots, mem, rng){
+    const taken=shotMap(shots); const fresh=[], old=[];
+    for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++){ const t=taken.get(x+','+y); if(!t){ if((x+y)%2===mem.parity) fresh.push({x,y}); } else if(t.result===RESULT.MISS) old.push({c:{x,y},turn:t.turn}); }
+    if(fresh.length) return rng.pick(fresh);
+    const any=[]; for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++){ if(!taken.has(x+','+y)) any.push({x,y}); } if(any.length) return rng.pick(any);
+    old.sort((a,b)=>a.turn-b.turn); return old.length?old[0].c:{x:rng.int(SIZE),y:rng.int(SIZE)};
+  }
+  function admiralShot(shots, mem, rng){ return targetShot(shots, mem, rng) || patientHunt(shots, mem, rng); }
+  /* ---- Fleet Admiral: uses everything it has legitimately seen ----
+     1. ships that revealed themselves (your machine gun, air strike, radar, a Long Lance miss) are attacked at once;
+     2. radar contacts; 3. target mode; 4. a probability map of where the remaining classes can still be. */
+  function revealedTargets(game, pid, mem){
+    const p=game.players[pid]; const shots=p.shots; const latest=shotMap(shots); const sunk=new Set(shots.filter(x=>x.result===RESULT.SUNK).map(x=>x.cls)); const out=[];
+    const consider=(cells, turn, cls)=>{ if(sunk.has(cls)||game.turn-turn>14) return; cells.forEach(c=>{ const t=latest.get(key(c)); if(t&&t.turn>turn) return; out.push({c, turn}); }); };
+    (p.sightings||[]).forEach(sg=>{ if(sg.cells) consider(sg.cells, sg.turn, sg.cls); });
+    (mem.contacts||[]).forEach(ct=>consider([ct.cell], ct.turn, ct.cls));
+    out.sort((a,b)=>b.turn-a.turn); return out.map(o=>o.c);
+  }
+  function densityMap(game, pid){
+    const shots=game.players[pid].shots; const turn=game.turn; const latest=shotMap(shots);
+    const sunk=new Set(shots.filter(x=>x.result===RESULT.SUNK).map(x=>x.cls)); const wreck=new Set(); shots.filter(x=>x.result===RESULT.SUNK&&x.footprint).forEach(x=>x.footprint.forEach(c=>wreck.add(key(c))));
+    const factor=k=>{ if(wreck.has(k)) return 0; const t=latest.get(k); if(!t) return 1; if(t.result!==RESULT.MISS) return 0.15; const age=turn-t.turn; return age<30?0:Math.min(0.5,(age-30)/100); };
     const score=new Map();
-    CLASS_ORDER.forEach(cls=>{
-      if(sunk.has(cls)) return;
-      const live=shots.filter(s=>s.cls===cls&&isHitLike(s)&&latest.get(key(s.cell))===s); const anchor=live.length?live.slice().sort((a,b)=>b.turn-a.turn)[0].cell:null; const ct=contacts.filter(c=>c.cls===cls);
-      for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++) HEADINGS.forEach(h=>{
-        const cells=Rules.shipCells({cls,bow:{x,y},heading:h}); if(cells.some(c=>!Rules.inBounds(c))) return;
-        for(const c of cells){ const k=key(c); if(wreck.has(k)) return; const s=latest.get(k); if(s&&s.result===RESULT.MISS&&turn-s.turn<=6) return; if(isHitLike(s)&&s.cls&&s.cls!==cls) return; }
-        if(anchor&&!cells.some(c=>c.x===anchor.x&&c.y===anchor.y)) return;
-        let w=1; if(anchor) w*=6; ct.forEach(k=>{ if(cells.some(c=>c.x===k.cell.x&&c.y===k.cell.y)) w*=4; });
-        cells.forEach(c=>{ const k=key(c); score.set(k,(score.get(k)||0)+w); });
-      });
-    });
+    CLASS_ORDER.forEach(cls=>{ if(sunk.has(cls)) return;
+      for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++) ['E','S'].forEach(h=>{ const cells=Rules.shipCells({cls,bow:{x,y},heading:h}); if(cells.some(c=>!Rules.inBounds(c))) return; let w=1; for(const c of cells){ w*=factor(key(c)); if(!w) return; } cells.forEach(c=>score.set(key(c),(score.get(key(c))||0)+w)); }); });
     return score;
   }
   function densityShot(game, pid, mem, rng){
-    const shots=game.players[pid].shots; const latest=new Map(); shots.forEach(s=>latest.set(key(s.cell),s)); const turn=game.turn;
-    const fresh=(mem.contacts||[]).filter(c=>turn-c.turn<=4&&!(latest.get(key(c.cell))&&latest.get(key(c.cell)).turn>c.turn)); if(fresh.length) return fresh.sort((a,b)=>b.turn-a.turn)[0].cell;
-    const score=densityMap(game,pid,mem); let best=[], bs=-1;
-    score.forEach((v,k)=>{ const s=latest.get(k); if(s&&(s.result!==RESULT.MISS||turn-s.turn<=6)) return; if(v>bs){ bs=v; best=[k]; } else if(v===bs) best.push(k); });
-    if(!best.length) return null; const k=rng.pick(best); const [x,y]=k.split(',').map(Number); return {x,y};
+    const latest=shotMap(game.players[pid].shots); const score=densityMap(game,pid); let best=[], bs=0;
+    score.forEach((v,k)=>{ const t=latest.get(k); if(t&&(t.result!==RESULT.MISS||game.turn-t.turn<30)) return; if(v>bs+1e-9){ bs=v; best=[k]; } else if(Math.abs(v-bs)<=1e-9) best.push(k); });
+    if(!best.length) return null; const [x,y]=rng.pick(best).split(',').map(Number); return {x,y};
   }
   function fleetShot(game, pid, mem, rng){
-    const shots=game.players[pid].shots; const last=shots[shots.length-1];
-    // reuse the Admiral's chase logic while a chase is pending or a bracket just missed; otherwise the probability map
-    if(mem.chase || (last&&last.result===RESULT.MISS&&liveHits(shots).some(h=>Math.abs(h.cell.x-last.cell.x)+Math.abs(h.cell.y-last.cell.y)===1))) return admiralShot(shots, mem, rng);
-    return densityShot(game,pid,mem,rng) || admiralShot(shots, mem, rng);
+    const shots=game.players[pid].shots; const seen=revealedTargets(game,pid,mem); if(seen.length) return seen[0];
+    return targetShot(shots, mem, rng) || densityShot(game,pid,mem,rng) || patientHunt(shots, mem, rng);
   }
   function chooseShot(game, pid, rng){
     const p=game.players[pid]; const mem=game.ai;
