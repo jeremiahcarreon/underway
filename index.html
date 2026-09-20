@@ -2999,6 +2999,13 @@ const UI = (function(){
       const back=t==='reverse'; out.push({type:t, cell, ship:r.ship, ang:Math.atan2(back?-h.y:h.y, back?-h.x:h.x), active:!!(S.pendingMove&&S.pendingMove.type===t)}); });
     return out;
   }
+  // Why some arrows are missing for the selected ship, in a few words (moves that are not legal are simply not offered on the map).
+  function blockedMoves(){
+    const g=S.game; const why={}; MOVE_TYPES.forEach(t=>{ const r=Rules.canMoveIn(g,me(),S.selShip,t); if(!r.ok) why[t]=r.reason; });
+    const parts=[]; if(why.advance) parts.push('ahead: '+why.advance); if(why.reverse) parts.push('astern: '+why.reverse);
+    if(why.rotcw&&why.rotcw===why.rotccw) parts.push('rotate: '+why.rotcw); else { if(why.rotcw) parts.push('rotate ↻: '+why.rotcw); if(why.rotccw) parts.push('rotate ↺: '+why.rotccw); }
+    return parts.length?' Not possible — '+parts.join(' · ')+'.':'';
+  }
   function selectOwnShip(i){ S.selShip=i; S.moveSel=true; S.pendingMove=null; coachDone('move'); vib(8); Sfx.click(); if(S.tab!=='own') setTab('own'); else refreshBattle(); }
   function tapOwn(cell){
     const g=S.game; if(!g||g.winner) return; if(S.tab!=='own') setTab('own');
@@ -3121,7 +3128,7 @@ const UI = (function(){
         set(MOVE_VERB[pm.type]+' '+SHIP_CLASSES[ship.cls].name, rot?'Pivots on the stern at '+cellName(Rules.sternCell(ship))+' · ENDS YOUR TURN, no shot':'Bow to '+cellName(pm.ship.bow)+' · you still fire this turn');
         btns.appendChild(trayButton('Confirm','primary',confirmMove,'tray-confirm')); btns.appendChild(trayButton('Cancel','',cancelMove,'tray-cancel')); }
       else if(S.moveSel){ const ship=my.fleet[S.selShip], mob=Rules.mobility(ship);
-        set(shipLabel(me(),ship.cls), hs.length?'Tap an arrow on the map · curved arrows rotate and end your turn':(mob==='sunk'?'Sunk.':mob==='crippled'?'Dead in the water — cannot move.':'No legal move from here.'));
+        set(shipLabel(me(),ship.cls), mob==='sunk'?'Sunk.':mob==='crippled'?'Dead in the water — cannot move.':(hs.length?'Tap an arrow on the map.':'No legal move from here.')+blockedMoves());
         btns.appendChild(trayButton('② Attack →','',()=>setTab('enemy'),'tray-skip')); }
       else { set(g.bonusMove?'Move a second ship?':'Move a ship?', g.bonusMove?'Fleet exercise: one more undamaged ship may advance or reverse.':'Tap a ship to see where it can go · optional'); btns.appendChild(trayButton('Skip → ② Attack','primary',()=>setTab('enemy'),'tray-skip')); }
     } else {
