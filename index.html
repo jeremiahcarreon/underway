@@ -419,12 +419,17 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
     <button class="small icon" id="btn-copy2" title="Copy link">⧉</button>
     <button class="small icon" id="btn-share2" title="Share">⇪</button>
     <span class="conn offline" id="battle-conn"><span class="dot"></span><span class="txt"></span></span>
+    <span class="turn-status"></span>
     <span class="spacer"></span>
-    <span class="turn" id="battle-turn">Turn 1</span>
     <span class="turn" id="battle-shots" title="Shots fired">0 shots</span>
-    <button class="small icon" id="btn-replay-last" title="Replay last action" disabled>↻</button>
     <button class="small icon" id="btn-settings" title="Settings">⚙</button>
     <button class="small danger" id="btn-surrender">Surrender</button>
+  </div>
+  <div class="statusline">
+    <span class="conn offline" id="battle-conn-m"><span class="dot"></span><span class="txt"></span></span>
+    <span class="turn-status"></span>
+    <span class="spacer"></span>
+    <button class="small icon" id="btn-menu" aria-label="Menu">⋯</button>
   </div>
   <div class="tabs">
     <button id="tab-own" class="active">Your ocean</button>
@@ -432,31 +437,22 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
   </div>
   <div class="battle">
     <div class="side" id="side-own">
-      <div class="ocean"><canvas id="ownCanvas" width="560" height="560"></canvas><span class="label" id="own-label">Your ocean</span><span class="badge" id="own-badge"></span><div class="prompt" id="own-prompt"></div></div>
-      <button class="small" id="btn-drawer">Fleet, tally &amp; log ▾</button>
+      <div class="ocean"><canvas id="ownCanvas" width="560" height="560"></canvas><span class="label" id="own-label">Your ocean</span><span class="badge" id="own-badge"></span></div>
       <div class="dock drawerable" id="ownDock"></div>
     </div>
     <div class="side inactive" id="side-enemy">
-      <div class="strip"><div class="weapons" id="weapons"></div><span class="sub" id="weapon-desc"></span></div>
-      <div class="ocean"><canvas id="enemyCanvas" width="560" height="560"></canvas><span class="label" id="enemy-label">Enemy waters</span><span class="badge" id="enemy-badge"></span><div class="prompt" id="enemy-prompt"></div></div>
+      <div class="ocean"><canvas id="enemyCanvas" width="560" height="560"></canvas><span class="label" id="enemy-label">Enemy waters</span><span class="badge" id="enemy-badge"></span></div>
       <div class="tally drawerable" id="tally"></div>
       <div class="dock drawerable" id="enemyDock"></div>
     </div>
     <div class="logbox drawerable"><h3>Battle log</h3><div class="log" id="log"></div></div>
   </div>
-  <div class="actions drawerable" id="actions">
-    <span class="phase" id="phase-label">Maneuver phase</span>
-    <select id="ship-select" aria-label="Ship to maneuver or fire from"></select>
-    <button id="btn-advance" title="Every section moves one cell ahead. You still fire this turn.">Advance<small>1 cell · then fire</small></button>
-    <button id="btn-reverse" title="Every section moves one cell astern. You still fire this turn.">Reverse<small>1 cell · then fire</small></button>
-    <button id="btn-rotcw" title="Turns 90° clockwise about the stern (the stern cell stays put). Ends your turn — no shot.">Rotate ↻<small>pivot stern · ends turn</small></button>
-    <button id="btn-rotccw" title="Turns 90° counter-clockwise about the stern (the stern cell stays put). Ends your turn — no shot.">Rotate ↺<small>pivot stern · ends turn</small></button>
-    <button id="btn-skip">Skip maneuver</button>
-    <span class="spacer"></span>
-    <span class="sub" id="target-label">No target</span>
-    <button class="hidden" id="btn-airdir" title="Switch the bomb line between horizontal and vertical (or tap the chosen cell again)">Line: ↔ horizontal</button>
-    <button class="hidden" id="btn-torpdir" title="Cycle the torpedo lane and direction (or tap the chosen cell again)">Lane: → row</button>
-    <button class="fire" id="btn-fire" disabled>FIRE</button>
+  <div class="tray" id="tray">
+    <div class="tray-coach hidden" id="tray-coach"><span id="coach-text"></span><button class="small primary" id="coach-ok">Got it</button></div>
+    <div class="tray-fleet" id="tray-fleet"></div>
+    <div class="tray-result hidden" id="tray-result"><span id="result-text"></span><button class="small" id="btn-replay-last">↻ Replay</button><button class="small" id="result-ok">OK</button></div>
+    <div class="tray-main"><div class="tray-text"><b id="tray-big"></b><span id="tray-sub"></span></div><div class="tray-btns" id="tray-btns"></div></div>
+    <div class="tray-msg" id="tray-msg"></div>
   </div>
 </section>
 
@@ -532,7 +528,27 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
   <div class="field"><label>Fast animations</label><div class="switch" id="set-fast" role="switch"></div></div>
   <div class="field"><label>Reduced motion</label><div class="switch" id="set-reduced" role="switch"></div></div>
   <div class="field"><label>Ambient sea loop</label><div class="switch" id="set-ambient" role="switch"></div></div>
+  <div class="field"><label>Vibration (phones)</label><div class="switch" id="set-vibrate" role="switch"></div></div>
+  <div class="field"><label>Auto-dismiss result cards</label><div class="switch" id="set-autoContinue" role="switch"></div></div>
   <div class="row" style="margin-top:12px"><span class="spacer"></span><button class="primary" id="btn-settings-close">Done</button></div>
+</div></div>
+
+<div class="overlay sheet" id="ov-menu"><div class="card">
+  <div class="row"><div class="col" style="gap:2px"><span class="sub">GAME CODE</span><span class="roomcode" id="menu-code" style="font-size:20px">------</span></div><span class="spacer"></span><button class="small" id="m-copy">Copy link</button><button class="small" id="m-share">Share</button></div>
+  <div class="optlist" style="margin-top:12px">
+    <button class="opt" id="m-drawer">Fleet, tally &amp; battle log</button>
+    <button class="opt" id="m-settings">Settings</button>
+    <button class="opt" id="m-howto">How to play</button>
+    <button class="opt" id="m-coach">Show the quick tips again</button>
+    <button class="opt" id="m-surrender" style="color:#ff9a90">Surrender</button>
+  </div>
+  <div class="row" style="margin-top:12px"><span class="spacer"></span><button class="primary" id="m-close">Close</button></div>
+</div></div>
+
+<div class="overlay sheet" id="ov-weapons"><div class="card">
+  <h2>Choose a weapon</h2>
+  <div class="optlist" id="wsheet"></div>
+  <div class="row" style="margin-top:12px"><span class="spacer"></span><button id="wsheet-close">Close</button></div>
 </div></div>
 
 <div class="overlay" id="ov-weapon"><div class="card">
@@ -585,7 +601,6 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
   <button class="primary" id="curtain-go">I'm ready</button>
 </div>
 
-<div class="banner" id="banner"><div><svg class="radar hidden" id="banner-radar" viewBox="0 0 56 56"><circle cx="28" cy="28" r="26" fill="none" stroke="#3fa9f5" stroke-width="1.5" opacity=".6"/><circle cx="28" cy="28" r="16" fill="none" stroke="#3fa9f5" stroke-width="1" opacity=".4"/><circle cx="28" cy="28" r="6" fill="none" stroke="#3fa9f5" stroke-width="1" opacity=".3"/><path id="radar-sweep" d="M28 28 L28 2 A26 26 0 0 1 50 14 Z" fill="#3fa9f5" opacity=".5"><animateTransform attributeName="transform" type="rotate" from="0 28 28" to="360 28 28" dur="2.2s" repeatCount="indefinite"/></path></svg><span id="banner-text"></span></div></div>
 <div class="toasts" id="toasts"></div>
 <div id="peg-tip"></div>
 
