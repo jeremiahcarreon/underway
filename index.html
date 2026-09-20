@@ -112,8 +112,10 @@ h3{font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.12
 .turn-status{font-weight:700;font-size:14px;letter-spacing:.02em}
 .turn-status.flash{animation:statusflash 1.4s ease-out}
 @keyframes statusflash{0%{color:var(--accent);text-shadow:0 0 14px #ffb347}100%{color:inherit}}
-/* action tray: the only control surface during a battle; the map is never covered */
-.tray{position:sticky;bottom:0;margin-top:10px;background:#0f1d2bf7;border:1px solid var(--line);border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;backdrop-filter:blur(6px);z-index:6}
+/* action tray: the only control surface during a battle; the map is never covered — it shrinks (never below 32 px cells) when the tray needs room */
+#screen-battle{padding-bottom:var(--tray-h,200px)}
+#screen-battle .ocean{max-width:min(560px, max(340px, calc(100dvh - var(--tray-h,200px) - 110px)))}
+.tray{position:fixed;left:0;right:0;bottom:0;margin:0 auto;max-width:1100px;background:#0f1d2bf7;border:1px solid var(--line);border-bottom:none;border-radius:14px 14px 0 0;padding:8px 10px calc(8px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:6px;backdrop-filter:blur(6px);z-index:6}
 .tray-fleet{display:flex;gap:4px}
 .tray-fleet .pip{flex:1;min-height:32px;padding:2px 4px;font-size:11px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border-radius:6px;border:1px solid var(--line);background:var(--bg2);color:var(--text)}
 .pip .dots{display:flex;gap:2px}
@@ -173,7 +175,7 @@ h3{font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.12
 .wm-row b{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:11px;letter-spacing:.08em;padding-top:2px}
 .optlist{display:flex;flex-direction:column;gap:6px}
 .opt{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg2);cursor:pointer;min-height:44px;text-align:left;font-size:14px}
-.opt.selected{outline:2px solid var(--accent);background:#2a3c1c}
+.opt.selected{outline:2px solid var(--accent);background:#2a3c1c;color:var(--text);font-weight:inherit;box-shadow:none}
 .opt.disabled{opacity:.45;cursor:not-allowed}
 .opt small{color:var(--muted);font-size:12px}
 .opt .tag{font-size:11px;padding:2px 8px;border-radius:10px;background:var(--panel2);white-space:nowrap}
@@ -248,8 +250,7 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
   .ocean{max-width:100%}
   .topbar{display:none}
   .statusline{display:flex}
-  #screen-battle{padding-bottom:var(--tray-h,200px)}
-  .tray{position:fixed;left:0;right:0;bottom:0;margin:0;border-radius:14px 14px 0 0;border-bottom:none;padding-bottom:calc(8px + env(safe-area-inset-bottom))}
+  #screen-battle .ocean{max-width:min(100%, max(340px, calc(100dvh - var(--tray-h,200px) - 140px)))}
   .overlay.sheet{align-items:flex-end;padding:0}
   .overlay.sheet .card{border-radius:16px 16px 0 0;max-height:82vh}
   #screen-battle:not(.drawer-open) .drawerable{display:none!important}
