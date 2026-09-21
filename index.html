@@ -1688,10 +1688,10 @@ const AI = (function(){
         out[pi*32+m]+=v*stay; } }
     return out;
   }
-  let beliefCache=null;
+  const beliefCache={};
   function beliefs(game, pid, mem){
     const me=game.players[pid]; const sig=game.room+'|'+pid+'|'+game.seed+'|'+(game.rematches||0); const enemyTurn=t=>((t%2===1)===(game.first!==pid));
-    let B=beliefCache&&beliefCache.sig===sig&&beliefCache.through<=game.turn&&beliefCache.nShots<=me.shots.length?beliefCache:null;
+    const old=beliefCache[pid]; let B=old&&old.sig===sig&&old.through<=game.turn&&old.nShots<=me.shots.length?old:null;
     if(!B){ B={sig, through:0, nShots:0, W:{}, gone:{}}; CLASS_ORDER.forEach(c=>{ B.W[c]=uniform(c); }); }
     // how much this opponent moves is learned from evidence: a damaged section found on a new square, or a hit square that went empty, says "mover"; a confirm on the same square says "sitter"
     let moved=0, still=0; const lastAt=new Map(); me.shots.forEach(x=>{ const k=key(x.cell), prevShot=lastAt.get(k); if(x.result===RESULT.CONFIRMED){ if(x.moved) moved++; else still++; } else if(x.result===RESULT.MISS&&prevShot&&prevShot.result!==RESULT.MISS&&prevShot.result!==RESULT.SUNK) moved++; lastAt.set(k,x); });
@@ -1715,7 +1715,7 @@ const AI = (function(){
     // advance the clock: on each enemy turn their ships may have moved, then anything they revealed that turn is applied
     const advance=to=>{ for(let t=B.through+1;t<=to;t++){ if(enemyTurn(t)) CLASS_ORDER.forEach(cls=>{ if(!B.gone[cls]) B.W[cls]=moveStep(cls,B.W[cls],mobility); }); (me.sightings||[]).filter(g=>g.turn===t).forEach(sighted); (mem.contacts||[]).filter(c=>c.turn===t).forEach(contact); } B.through=Math.max(B.through,to); };
     for(let i=B.nShots;i<me.shots.length;i++){ advance(me.shots[i].turn); observe(me.shots[i]); }
-    advance(game.turn-1); B.nShots=me.shots.length; beliefCache=B;
+    advance(game.turn-1); B.nShots=me.shots.length; beliefCache[pid]=B;
     const out={};
     CLASS_ORDER.forEach(cls=>{ if(B.gone[cls]) return; const G=geom(cls), w=B.W[cls]; let total=0; for(let i=0;i<NSTATE;i++) total+=w[i]; if(total<=0) return;
       const O=new Float64Array(SIZE*SIZE), V=new Float64Array(SIZE*SIZE), pairs=new Map(); let expHits=0, mobile=0;
@@ -1728,33 +1728,41 @@ const AI = (function(){
   }
   function shellScores(bel){ const sc=new Map(); Object.values(bel).forEach(b=>{ for(let ci=0;ci<SIZE*SIZE;ci++){ if(b.V[ci]>0){ const k=(ci%SIZE)+','+Math.floor(ci/SIZE); sc.set(k,(sc.get(k)||0)+b.V[ci]); } } }); return sc; }
   const cellOf=k=>{ const [x,y]=k.split(',').map(Number); return {x,y}; };
+  // What the enemy can infer about OUR fleet, from their own shots and whatever we revealed: the same filter, run from their side.
+  function exposure(game, pid){
+    const foe=Rules.other(pid); const eb=beliefs(game, foe, {contacts:[]}); const danger=new Float64Array(SIZE*SIZE); Object.values(eb).forEach(b=>{ for(let i=0;i<SIZE*SIZE;i++) danger[i]+=b.V[i]; });
+    const known=(game.players[pid].fleet||[]).map(sh=>{ if(!sh.bow||sh.sunk||!eb[sh.cls]) return 1; const cs=Rules.shipCells(sh); return Math.min(1, cs.reduce((a,c)=>a+eb[sh.cls].O[c.y*SIZE+c.x],0)/cs.length); });
+    return {danger, known};
+  }
+  // Revealing a ship (machine gun, radar, air strike) invites an immediate attack on it: the cost is what we stand to lose, less what they already know.
+  function revealCost(sh, known){ if(!sh||sh.sunk) return 9; const left=sh.hits.filter(h=>!h).length; return (1-known)*0.6*Math.min(left,3)+(sh.crippled?0:0.15); }
   function enumerateActions(game, pid, mem){
-    const bel=beliefs(game,pid,mem); const sc=shellScores(bel); const me=game.players[pid]; const fleet=me.fleet||[]; const ready=id=>Rules.weaponReady(game,pid,id).ok; const acts=[];
+    const bel=beliefs(game,pid,mem); const ex=exposure(game,pid); const wrecks=new Set(); game.players[pid].shots.forEach(x=>{ if(x.result===RESULT.SUNK&&x.footprint) x.footprint.forEach(c=>wrecks.add(key(c))); }); const sc=shellScores(bel); const me=game.players[pid]; const fleet=me.fleet||[]; const ready=id=>Rules.weaponReady(game,pid,id).ok; const acts=[];
     const val=c=>sc.get(key(c))||0; const ix=c=>c.y*SIZE+c.x; const pAny=c=>{ let q=1; Object.values(bel).forEach(b=>{ q*=1-Math.min(1,b.O[ix(c)]); }); return 1-q; };
     const hunting=!Object.values(bel).some(b=>b.expHits>0.2);
     for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++){ const c={x,y}; const bonus=hunting&&(x+y)%2===0?1e-4:0; acts.push({weapon:'shell', cell:c, score:val(c)+bonus}); }
     if(ready('mine')){ const noContact=Rules.weaponSpec(game,pid,'mine').noContact; const mined=new Set((me.mines||[]).filter(m=>m.live).map(m=>key(m.cell)));
       for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++){ const c={x,y}; if(mined.has(key(c))) continue; let trap=0; Object.values(bel).forEach(b=>{ if(b.next) trap+=Math.max(0,b.next[ix(c)]-b.O[ix(c)])*2.2; }); const s0=(noContact?0:val(c))+trap-0.25; acts.push({weapon:'mine', cell:c, score:s0}); } }
-    if(ready('airstrike')&&fleet[0]&&!fleet[0].sunk&&Rules.hitCount(fleet[0])===0){ for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++) [true,false].forEach(hz=>{ const line=Rules.lineCells({x,y},hz); if(line[0].x!==x||line[0].y!==y) return; acts.push({weapon:'airstrike', cells:line, score:line.reduce((a,c)=>a+val(c),0)*0.95-0.9}); }); }
+    if(ready('airstrike')&&fleet[0]&&!fleet[0].sunk&&Rules.hitCount(fleet[0])===0){ for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++) [true,false].forEach(hz=>{ const line=Rules.lineCells({x,y},hz); if(line[0].x!==x||line[0].y!==y) return; acts.push({weapon:'airstrike', cells:line, score:line.reduce((a,c)=>a+val(c),0)*0.95-0.3-revealCost(fleet[0],ex.known[0])}); }); }
     const sub=fleet[Rules.SUB_IDX]; if(ready('torpedo')&&sub&&sub.bow&&!sub.sunk&&(Rules.weaponSpec(game,pid,'torpedo').damagedOk||Rules.hitCount(sub)===0)&&!(game.movedShips||[]).includes(Rules.SUB_IDX)){
-      ['row','col'].forEach(axis=>{ for(let i=0;i<SIZE;i++) [1,-1].forEach(dir=>{ const lane={axis,index:i,dir}; let alive=1, s0=0; for(const c of Rules.torpedoPath(lane)){ const p=pAny(c); const hitv=p>0?val(c)/Math.max(p,1e-6):0; s0+=alive*Math.min(val(c),3.5*p); void hitv; alive*=1-p; if(alive<0.02) break; } acts.push({weapon:'torpedo', lane, score:s0-0.2}); }); }); }
-    if(ready('mg')){ const nb=Rules.weaponSpec(game,pid,'mg').bullets; const shooter=fleet.map((sh,i)=>({sh,i})).filter(o=>o.sh.bow&&!o.sh.sunk).sort((a,b)=>(a.sh.crippled?0:1)-(b.sh.crippled?0:1)||SHIP_CLASSES[a.sh.cls].size-SHIP_CLASSES[b.sh.cls].size)[0];
+      ['row','col'].forEach(axis=>{ for(let i=0;i<SIZE;i++) [1,-1].forEach(dir=>{ const lane={axis,index:i,dir}; let alive=1, s0=0; for(const c of Rules.torpedoPath(lane)){ if(wrecks.has(key(c))) break; const p=pAny(c); const hitv=p>0?val(c)/Math.max(p,1e-6):0; s0+=alive*Math.min(val(c),3.5*p); void hitv; alive*=1-p; if(alive<0.02) break; } acts.push({weapon:'torpedo', lane, score:s0-0.2}); }); }); }
+    if(ready('mg')){ const nb=Rules.weaponSpec(game,pid,'mg').bullets; const shooter=fleet.map((sh,i)=>({sh,i,cost:revealCost(sh,ex.known[i])})).filter(o=>o.sh.bow&&!o.sh.sunk).sort((a,b)=>a.cost-b.cost)[0];
       if(shooter){ const cand=[]; Object.values(bel).forEach(b=>{ b.pairs.forEach((w,pk)=>{ const [i1,i2]=pk.split('|').map(Number); cand.push({k1:(i1%SIZE)+','+Math.floor(i1/SIZE), k2:(i2%SIZE)+','+Math.floor(i2/SIZE), v:w}); }); }); cand.sort((a,b)=>b.v-a.v);
         const used=new Set(), cells=[]; let s0=0; for(const c of cand){ if(cells.length+2>nb) break; if(used.has(c.k1)||used.has(c.k2)) continue; used.add(c.k1); used.add(c.k2); cells.push(cellOf(c.k1),cellOf(c.k2)); s0+=c.v; }
         if(cells.length<nb){ [...sc.entries()].sort((a,b)=>b[1]-a[1]).forEach(([k])=>{ if(cells.length<nb&&!used.has(k)){ used.add(k); cells.push(cellOf(k)); } }); }
-        if(cells.length===nb) acts.push({weapon:'mg', cells, shipIdx:shooter.i, score:s0-0.45}); } }
-    if(ready('radar')&&hunting){ const scout=fleet.map((sh,i)=>({sh,i})).filter(o=>o.sh.bow&&!o.sh.sunk&&Rules.hitCount(o.sh)===0).sort((a,b)=>SHIP_CLASSES[a.sh.cls].size-SHIP_CLASSES[b.sh.cls].size)[1]||null;
-      if(scout){ let best=null; for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++){ const a=Rules.radarAreaFor(game,pid,scout.sh.cls,{x,y}); if(a.x!==x||a.y!==y) continue; let info=0; for(let yy=a.y;yy<a.y+a.size;yy++) for(let xx=a.x;xx<a.x+a.size;xx++){ const p=pAny({x:xx,y:yy}); info+=p*(1-p); } if(!best||info>best.info) best={info,anchor:{x,y}}; } if(best) acts.push({weapon:'radar', shipIdx:scout.i, anchor:best.anchor, score:best.info*0.55-0.5}); } }
+        if(cells.length===nb) acts.push({weapon:'mg', cells, shipIdx:shooter.i, score:s0-0.15-shooter.cost}); } }
+    if(ready('radar')){ const scout=fleet.map((sh,i)=>({sh,i,cost:revealCost(sh,ex.known[i])})).filter(o=>o.sh.bow&&!o.sh.sunk&&Rules.hitCount(o.sh)===0).sort((a,b)=>a.cost-b.cost)[0]||null;
+      if(scout){ let best=null; for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++){ const a=Rules.radarAreaFor(game,pid,scout.sh.cls,{x,y}); if(a.x!==x||a.y!==y) continue; let info=0; for(let yy=a.y;yy<a.y+a.size;yy++) for(let xx=a.x;xx<a.x+a.size;xx++){ const p=pAny({x:xx,y:yy}); info+=p*(1-p); } if(!best||info>best.info) best={info,anchor:{x,y}}; } if(best) acts.push({weapon:'radar', shipIdx:scout.i, anchor:best.anchor, score:best.info*0.85-0.1-scout.cost}); } }   // a found section is worth most of a sure hit next turn
     acts.sort((a,b)=>b.score-a.score); return acts;
   }
   // Own maneuver, scored the same way: get a damaged or revealed ship off the squares the enemy knows about.
+  // Own maneuver: slide the ship whose move most reduces what the enemy's belief says a shell there is worth (never back onto squares they already suspect).
   function enumerateMoves(game, pid, action){
-    const me=game.players[pid], enemy=game.players[Rules.other(pid)], fleet=me.fleet||[]; const out=[]; const recent=enemy.shots.filter(x=>game.turn-x.turn<=12);
-    const seen=(enemy.sightings||[]).filter(g=>g.cells&&game.turn-g.turn<=6);
-    fleet.forEach((sh,i)=>{ if(!sh.bow||sh.sunk||sh.crippled) return; if(action&&action.weapon==='torpedo'&&i===Rules.SUB_IDX) return; if(action&&(action.weapon==='mg'||action.weapon==='radar')&&action.shipIdx===i) return;
-      const cur=Rules.shipCells(sh); const known=recent.filter(x=>x.shipIdx===i&&x.result!==RESULT.MISS).length+(seen.some(g=>g.cls===sh.cls)?2:0); if(!known) return;
-      ['advance','reverse'].forEach(t=>{ const r=Rules.canMoveIn(game,pid,i,t); if(!r.ok) return; const nc=Rules.shipCells(r.ship); const exposed=nc.filter(c=>recent.some(x=>x.cell.x===c.x&&x.cell.y===c.y&&x.result===RESULT.MISS)).length; const fresh=nc.filter(c=>!cur.some(o=>o.x===c.x&&o.y===c.y)).length; out.push({ship:i,type:t,score:known*0.5+fresh*0.2+exposed*0.3}); }); });
-    out.sort((a,b)=>b.score-a.score); return out;
+    const fleet=game.players[pid].fleet||[]; const ex=exposure(game,pid); const out=[]; const risk=(sh)=>Rules.shipCells(sh).reduce((a,c,sec)=>a+(sh.hits[sec]?0:ex.danger[c.y*SIZE+c.x]),0);
+    fleet.forEach((sh,i)=>{ if(!sh.bow||sh.sunk||sh.crippled) return; if(action&&action.weapon==='torpedo'&&i===Rules.SUB_IDX) return;
+      const now=risk(sh); if(now<0.12) return;
+      ['advance','reverse'].forEach(t=>{ const r=Rules.canMoveIn(game,pid,i,t); if(!r.ok) return; const after=risk(Object.assign({},r.ship,{hits:sh.hits})); out.push({ship:i,type:t,score:now-after}); }); });
+    out.sort((a,b)=>b.score-a.score); return out.filter(m=>m.score>0.08);
   }
   // Difficulty = which rank of the sorted list is played. Fleet Admiral always takes rank 1.
   function pickRank(list, level, rng){ if(!list.length) return null; if(level==='fleet') return list[0]; const top=list.slice(0,4).filter(a=>a.score>=list[0].score*0.55); return rng.pick(top.length?top:[list[0]]); }
