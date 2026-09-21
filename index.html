@@ -1704,13 +1704,16 @@ const AI = (function(){
         if(x.result===RESULT.MISS||x.cls!==cls){ zeroCovering(cls,ci); }
         else if(x.result===RESULT.SUNK){ B.gone[cls]=true; }
         else { const nw=new Float64Array(NSTATE); G.cells.forEach((cs,pi)=>{ if(!cs) return; const sec=cs.indexOf(ci); if(sec<0) return; const bit=1<<sec; for(let m=0;m<32;m++){ const v=w[pi*32+m]; if(!v) continue;
-              if(x.result===RESULT.HIT){ if(!(m&bit)) nw[pi*32+(m|bit)]+=v; }            // an undamaged section was there: it is damaged now
+              if(x.result===RESULT.HIT){ if(m&bit) continue; const was=(m&G.stern)||pop(m)>=G.thr, nm=m|bit, now=(nm&G.stern)||pop(nm)>=G.thr; if(!was&&(!!now)!==(!!x.crippled)) continue; nw[pi*32+nm]+=v; }   // undamaged section, now damaged; 'crippled or not' must match what was reported
               else if(x.result===RESULT.CONFIRMED){ if(m&bit) nw[pi*32+m]+=v; }         // an already damaged section was there
               else nw[pi*32+m]+=v; } });                                                 // graze: some section, damage unknown
           B.W[cls]=nw; }
         rescue(cls); });
       if(x.result===RESULT.SUNK&&x.footprint) x.footprint.forEach(c=>CLASS_ORDER.forEach(cls=>{ if(!B.gone[cls]){ zeroCovering(cls,c.y*SIZE+c.x); rescue(cls); } })); };
-    const sighted=g=>{ if(!g.cells||B.gone[g.cls]) return; const G=geom(g.cls), w=B.W[g.cls], byMask=new Float64Array(32); let t=0; for(let i=0;i<NSTATE;i++){ byMask[i&31]+=w[i]; t+=w[i]; } const pi=(g.bow.y*SIZE+g.bow.x)*4+HEADINGS.indexOf(g.heading); if(!G.cells[pi]) return; const nw=new Float64Array(NSTATE); for(let m=0;m<32;m++) nw[pi*32+m]=t>0?byMask[m]:(m?0:1); B.W[g.cls]=nw; };
+    const sighted=g=>{ if(!g.cells||B.gone[g.cls]) return; const G=geom(g.cls), w=B.W[g.cls], byMask=new Float64Array(32), hi=HEADINGS.indexOf(g.heading); const mirror=m=>{ let r=0; for(let k=0;k<G.n;k++) if(m&(1<<k)) r|=1<<(G.n-1-k); return r; }; let t=0; for(let i=0;i<NSTATE;i++){ if(!w[i]) continue; const m=i&31, h=(i>>5)&3; byMask[((h+2)&3)===hi?mirror(m):m]+=w[i]; t+=w[i]; } const pi=(g.bow.y*SIZE+g.bow.x)*4+hi; if(!G.cells[pi]) return; const nw=new Float64Array(NSTATE); let exact=0; for(let m=0;m<32;m++) exact+=w[pi*32+m];
+      if(exact>0){ for(let m=0;m<32;m++) nw[pi*32+m]=w[pi*32+m]; }            // seen exactly here: keep only the histories that end here, with their own damage
+      else for(let m=0;m<32;m++) nw[pi*32+m]=t>0?byMask[m]:(m?0:1);             // no history explains it: keep what is known about damage, by section
+      B.W[g.cls]=nw; };
     const contact=ct=>{ if(B.gone[ct.cls]) return; const G=geom(ct.cls), w=B.W[ct.cls], ci=ct.cell.y*SIZE+ct.cell.x; G.cells.forEach((cs,pi)=>{ if(cs&&!cs.includes(ci)) for(let m=0;m<32;m++) w[pi*32+m]=0; }); rescue(ct.cls); };
     // advance the clock: on each enemy turn their ships may have moved, then anything they revealed that turn is applied
     const advance=to=>{ for(let t=B.through+1;t<=to;t++){ if(enemyTurn(t)) CLASS_ORDER.forEach(cls=>{ if(!B.gone[cls]) B.W[cls]=moveStep(cls,B.W[cls],mobility); }); (me.sightings||[]).filter(g=>g.turn===t).forEach(sighted); (mem.contacts||[]).filter(c=>c.turn===t).forEach(contact); } B.through=Math.max(B.through,to); };
@@ -1740,7 +1743,10 @@ const AI = (function(){
     const bel=beliefs(game,pid,mem); const ex=exposure(game,pid); const wrecks=new Set(); game.players[pid].shots.forEach(x=>{ if(x.result===RESULT.SUNK&&x.footprint) x.footprint.forEach(c=>wrecks.add(key(c))); }); const sc=shellScores(bel); const me=game.players[pid]; const fleet=me.fleet||[]; const ready=id=>Rules.weaponReady(game,pid,id).ok; const acts=[];
     const val=c=>sc.get(key(c))||0; const ix=c=>c.y*SIZE+c.x; const pAny=c=>{ let q=1; Object.values(bel).forEach(b=>{ q*=1-Math.min(1,b.O[ix(c)]); }); return 1-q; };
     const hunting=!Object.values(bel).some(b=>b.expHits>0.2);
-    for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++){ const c={x,y}; const bonus=hunting&&(x+y)%2===0?1e-4:0; acts.push({weapon:'shell', cell:c, score:val(c)+bonus}); }
+    // Blind search must not have a blind spot: a ship parked on an edge sits where few placements overlap, so pure probability never looks there, and people like edges. Water left alone longest earns a growing bonus, edges a small one: a long hunt becomes a full sweep.
+    const lastLook=new Map(); me.shots.forEach(x=>lastLook.set(key(x.cell),x.turn)); const STALE=0.04, EDGE=0.02;
+    const stale=c=>{ const t=lastLook.get(key(c)); const age=Math.min(120, game.turn-(t==null?0:t)); const edge=(c.x===0||c.y===0||c.x===SIZE-1||c.y===SIZE-1)?EDGE:0; return STALE*age/120+edge; };
+    for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++){ const c={x,y}; if(wrecks.has(key(c))){ acts.push({weapon:'shell', cell:c, score:0}); continue; } const bonus=hunting&&(x+y)%2===0?1e-4:0; acts.push({weapon:'shell', cell:c, score:val(c)+bonus+(val(c)<0.5?stale(c):0)}); }
     if(ready('mine')){ const noContact=Rules.weaponSpec(game,pid,'mine').noContact; const mined=new Set((me.mines||[]).filter(m=>m.live).map(m=>key(m.cell)));
       for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++){ const c={x,y}; if(mined.has(key(c))) continue; let trap=0; Object.values(bel).forEach(b=>{ if(b.next) trap+=Math.max(0,b.next[ix(c)]-b.O[ix(c)])*2.2; }); const s0=(noContact?0:val(c))+trap-0.25; acts.push({weapon:'mine', cell:c, score:s0}); } }
     if(ready('airstrike')&&fleet[0]&&!fleet[0].sunk&&Rules.hitCount(fleet[0])===0){ for(let y=0;y<SIZE;y++) for(let x=0;x<SIZE;x++) [true,false].forEach(hz=>{ const line=Rules.lineCells({x,y},hz); if(line[0].x!==x||line[0].y!==y) return; acts.push({weapon:'airstrike', cells:line, score:line.reduce((a,c)=>a+val(c),0)*0.95-0.3-revealCost(fleet[0],ex.known[0])}); }); }
