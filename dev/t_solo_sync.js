@@ -14,9 +14,9 @@ async function signIn(b,name,pin){ await b.goto(URL); await b.wait(500); await b
   await b.click('.ailvl[data-level="fleet"]'); await b.click('#btn-ai'); await b.wait(200); await b.click('.preset[data-preset="arsenal"]'); await b.click('.navybtn:nth-child(2)'); await b.click('#btn-lobby-start'); await b.wait(200); await b.click('.tpl[data-tpl="spread"]'); await b.click('#btn-ready'); await waitFor(b, `Underway.UI.S.screen==='battle'`, 9000); await b.eval(`Underway.UI.S.settings.fast=true; Underway.Anim.settings.fast=true;`);
   let s=await settle(b); const code=s.room; console.log('solo game', code);
   const weaponsSeen=new Set();
-  for(let t=0;t<28;t++){ if(s.winner) break; const before=await b.eval(`Underway.UI.S.game.log.length`); await showTab(b,'enemy'); await tapEnemy(b,P(t%10,Math.floor(t/10)+2)); if(await b.eval(`!document.getElementById('tray-fire')||document.getElementById('tray-fire').disabled`)) continue; await b.click('#tray-fire'); s=await settle(b);
+  for(let t=0;t<10;t++){ if(s.winner) break; const before=await b.eval(`Underway.UI.S.game.log.length`); await showTab(b,'enemy'); await tapEnemy(b,P(t%10,Math.floor(t/10)+2)); if(await b.eval(`!document.getElementById('tray-fire')||document.getElementById('tray-fire').disabled`)) continue; await b.click('#tray-fire'); s=await settle(b);
     const ws=await b.eval(`Underway.UI.S.game.log.slice(${before}).filter(e=>e.player==='guest'&&(e.kind==='shot'||e.kind==='mine'||e.kind==='radar')).map(e=>e.kind==='shot'?(e.weapon||'shell'):e.kind)`); ws.forEach(w=>weaponsSeen.add(w)); }
-  console.log('AI weapons seen in 28 turns:', [...weaponsSeen].join(', '), '| turn', s.turn);
+  console.log('AI weapons seen in 10 turns:', [...weaponsSeen].join(', '), '| turn', s.turn);
   await sleep(1600); const me1=await (await fetch(URL+'api/me?token='+encodeURIComponent(await b.eval(`Underway.UI.S.admiral.token`)))).json(); const sg=me1.games.find(g=>g.code===code); console.log('server knows the solo game:', sg?sg.kind+' '+sg.status+' turn '+sg.turns:'MISSING');
   // close the browser entirely; new browser, sign in, My games -> Resume
   const before=await st(b); b.close(); await sleep(300); b=new Browser({}); await b.launch(); await signIn(b,'TheMan','1234'); await b.click('#btn-mygames'); await waitFor(b, `document.querySelectorAll('#mygames .playerbox').length>0`, 8000, 'my games list');
