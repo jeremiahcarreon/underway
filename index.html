@@ -58,6 +58,15 @@ h3{font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.12
 .navybtn svg{width:64px;height:40px;border:1px solid #0006;border-radius:2px;box-shadow:0 1px 3px #0008}
 .navybtn span{font-size:12px}
 .navybtn small{font-size:10px;color:var(--accent);line-height:1.1;text-align:center}
+.optfold{margin-top:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg2)}
+.optfold summary{cursor:pointer;padding:10px 12px;display:flex;gap:8px;align-items:baseline;list-style:none}
+.optfold summary::-webkit-details-marker{display:none}
+.optfold summary::before{content:'▸';color:var(--accent)}
+.optfold[open] summary::before{content:'▾'}
+.optfold-t{font-weight:700}
+.optfold>*:not(summary){margin-left:12px;margin-right:12px}
+.optfold>*:last-child{margin-bottom:10px}
+.lobby-actions{margin-top:10px;position:sticky;bottom:0;background:var(--panel);padding:8px 0 2px;z-index:2}
 .navybtn.selected{outline:3px solid var(--accent);background:#2a3c1c}
 .navybtn.locked{opacity:.35;cursor:not-allowed}
 .navybtn.locked::after{content:"TAKEN";position:absolute;top:6px;right:6px;font-size:10px;background:var(--danger);padding:2px 5px;border-radius:4px;color:#fff}
@@ -142,7 +151,7 @@ h3{font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.12
 .tray-msg{font-size:12.5px;color:var(--muted);min-height:16px;line-height:1.25}
 .tray-msg.err{color:#ff9a90}
 .tray-msg.chat{font-style:italic}
-.tray-coach{display:flex;gap:8px;align-items:center;background:#22361a;border:1px solid var(--ok);border-radius:8px;padding:8px;font-size:13.5px;line-height:1.35;animation:coachpulse 1.6s ease-in-out 3}
+.tray-coach{position:fixed;top:calc(6px + env(safe-area-inset-top));left:0;right:0;margin:0 auto;width:calc(100% - 16px);max-width:560px;z-index:30;box-shadow:0 6px 20px #000a;display:flex;gap:8px;align-items:center;background:#22361a;border:1px solid var(--ok);border-radius:8px;padding:8px;font-size:13.5px;line-height:1.35;animation:coachpulse 1.6s ease-in-out 3}
 .tray-coach span{flex:1}
 @keyframes coachpulse{50%{box-shadow:0 0 0 4px #3ecf8e55}}
 .overlay.sheet .card{max-width:560px}
@@ -243,6 +252,19 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
 }
 @media (max-width: 720px){
   .screen{padding:8px}
+  #screen-lobby .card{padding:10px}
+  #screen-lobby .roomcode{font-size:20px}
+  #screen-lobby h3{margin:8px 0 6px}
+  #screen-lobby .playerbox{padding:6px 8px;gap:8px}
+  #screen-lobby .playerbox svg,#screen-lobby .playerbox .livery{width:32px!important;height:20px!important}
+  #screen-lobby .playerbox .pname{font-size:13px}
+  #screen-lobby .grid2{margin-bottom:6px!important}
+  .navygrid{grid-template-columns:repeat(5,1fr);gap:5px}
+  .navybtn{min-height:0;padding:6px 2px 5px;gap:3px}
+  .navybtn svg{width:44px;height:28px}
+  .navybtn span{font-size:10.5px;line-height:1.1}
+  .navybtn small{display:none}
+  .navybtn.locked::after{content:'✕';top:2px;right:2px;padding:0 4px}
   .battle,.placegrid{grid-template-columns:1fr}
   .tabs{display:flex}
   .battle .side.inactive{display:none}
@@ -250,7 +272,18 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
   .ocean{max-width:100%}
   .topbar{display:none}
   .statusline{display:flex}
-  #screen-battle .ocean{max-width:min(100%, max(340px, calc(100dvh - var(--tray-h,200px) - 140px)))}
+  #screen-battle .ocean{max-width:min(100%, max(270px, calc(100dvh - var(--tray-h,200px) - 132px)))}
+  /* phone tray stays short so the map is never covered: tips float over the top bar, ship pips show only while moving, buttons get their own row */
+  #screen-battle:has(#side-own.inactive) .tray-fleet{display:none}
+  .tray-main{flex-direction:column;align-items:stretch;gap:6px;min-height:0}
+  .tray-text{display:flex;flex-direction:column}
+  .tray-text b{font-size:16px;-webkit-line-clamp:1}
+  .tray-text span{overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .tray-btns{max-width:none;flex-wrap:nowrap;justify-content:stretch}
+  .tray-btns button{min-height:46px}
+  .tray-btns button.fire,.tray-btns button.primary{flex:1}
+  .statusline{min-height:34px;margin-bottom:4px;padding:2px 8px}
+  .lobby-actions .primary{flex:1 1 100%;order:-1}
   .overlay.sheet{align-items:flex-end;padding:0}
   .overlay.sheet .card{border-radius:16px 16px 0 0;max-height:82vh}
   #screen-battle:not(.drawer-open) .drawerable{display:none!important}
@@ -358,11 +391,14 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
       </div>
       <h3>Choose your navy</h3>
       <div class="navygrid" id="navy-grid"></div>
-      <h3 style="margin-top:14px">Game options <span class="sub" id="options-who" style="text-transform:none;letter-spacing:0"></span></h3>
+      <div class="sub" id="navy-trait" style="margin-top:8px;line-height:1.35;min-height:1.35em"></div>
+      <details class="optfold" id="options-fold">
+        <summary><span class="optfold-t">Game options</span><span class="sub" id="options-summary"></span><span class="sub" id="options-who" style="display:none"></span></summary>
       <div class="row" style="margin-bottom:6px"><span class="sub">Presets</span><button class="small preset" data-preset="classic">Classic + movement</button><button class="small preset" data-preset="arsenal">Full arsenal</button><button class="small preset" data-preset="full">Arsenal + navy abilities</button></div>
       <div class="weapons" id="options-grid"></div>
       <div class="sub" id="options-note" style="margin-top:6px;line-height:1.4"></div>
-      <div class="row" style="margin-top:10px">
+      </details>
+      <div class="row lobby-actions">
         <button class="small" id="btn-navy-random">Random navy</button>
         <span class="spacer"></span>
         <button id="btn-lobby-leave">Leave</button>
@@ -442,8 +478,8 @@ table.tests tr.fail td:first-child{color:var(--danger);font-weight:700}
     </div>
     <div class="logbox drawerable"><h3>Battle log</h3><div class="log" id="log"></div></div>
   </div>
+  <div class="tray-coach hidden" id="tray-coach"><span id="coach-text"></span><button class="small primary" id="coach-ok">Got it</button></div>
   <div class="tray" id="tray">
-    <div class="tray-coach hidden" id="tray-coach"><span id="coach-text"></span><button class="small primary" id="coach-ok">Got it</button></div>
     <div class="tray-fleet" id="tray-fleet"></div>
     <div class="tray-result hidden" id="tray-result"><span id="result-text"></span><button class="small" id="btn-replay-last">↻ Replay</button><button class="small" id="result-ok">OK</button></div>
     <div class="tray-chips hidden" id="tray-chips"></div>
@@ -2302,13 +2338,13 @@ const Render = (function(){
   function drawHandles(o){
     const ctx=o.ctx, c=o.cell; if(!o.handles||!o.handles.length) return;
     o.handles.forEach(hd=>{ const p=o.cellCenter(hd.cell); const r=c*0.43; const rot=hd.type==='rotcw'||hd.type==='rotccw';
-      ctx.save(); ctx.translate(p.x,p.y); ctx.fillStyle=hd.active?'#3ecf8e':'#ffb347'; ctx.strokeStyle='#0b1520'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.arc(0,0,r,0,TAU); ctx.fill(); ctx.stroke();
+      ctx.save(); ctx.translate(p.x,p.y); ctx.globalAlpha=hd.dim?0.78:1; ctx.fillStyle=(hd.active||hd.on)?'#3ecf8e':'#ffb347'; ctx.strokeStyle='#0b1520'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.arc(0,0,r,0,TAU); ctx.fill(); ctx.stroke();
       ctx.strokeStyle='#1a1200'; ctx.fillStyle='#1a1200'; ctx.lineWidth=Math.max(2,c*0.09); ctx.lineCap='round'; ctx.lineJoin='round';
       if(hd.active){ ctx.beginPath(); ctx.moveTo(-r*0.45,0); ctx.lineTo(-r*0.1,r*0.35); ctx.lineTo(r*0.5,-r*0.35); ctx.stroke(); }
       else if(!rot){ ctx.rotate(hd.ang); ctx.beginPath(); ctx.moveTo(-r*0.5,0); ctx.lineTo(r*0.3,0); ctx.stroke(); ctx.beginPath(); ctx.moveTo(r*0.6,0); ctx.lineTo(r*0.1,-r*0.4); ctx.lineTo(r*0.1,r*0.4); ctx.closePath(); ctx.fill(); }
       else { const cw=hd.type==='rotcw'; ctx.rotate(hd.ang); const a0=cw?-2.5:2.5, a1=cw?0.7:-0.7; ctx.beginPath(); ctx.arc(0,0,r*0.46,a0,a1,!cw); ctx.stroke(); ctx.save(); ctx.translate(Math.cos(a1)*r*0.46,Math.sin(a1)*r*0.46); ctx.rotate(a1+(cw?Math.PI/2:-Math.PI/2)); ctx.beginPath(); ctx.moveTo(r*0.36,0); ctx.lineTo(-r*0.12,-r*0.32); ctx.lineTo(-r*0.12,r*0.32); ctx.closePath(); ctx.fill(); ctx.restore(); }
       ctx.restore();
-      if(rot||hd.active){ ctx.font='bold '+Math.max(7,Math.round(c*0.2))+'px system-ui,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; const label=hd.active?'TAP AGAIN':'ENDS TURN'; const tw=ctx.measureText(label).width+6; let ly=p.y+r+c*0.17; if(ly>o.h-c*0.2) ly=p.y-r-c*0.17; const lx=Math.min(o.w-tw/2-2,Math.max(o.margin+tw/2,p.x)); ctx.fillStyle='rgba(10,10,14,0.85)'; ctx.fillRect(lx-tw/2,ly-c*0.14,tw,c*0.28); ctx.fillStyle=hd.active?'#8ef0b8':'#ffd27a'; ctx.fillText(label,lx,ly); } });
+      if((rot&&hd.label!=='')||hd.active||hd.label){ ctx.font='bold '+Math.max(7,Math.round(c*0.2))+'px system-ui,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; const label=hd.active?'TAP AGAIN':(hd.label||'ENDS TURN'); const tw=ctx.measureText(label).width+6; let ly=p.y+r+c*0.17; if(ly>o.h-c*0.2) ly=p.y-r-c*0.17; const lx=Math.min(o.w-tw/2-2,Math.max(o.margin+tw/2,p.x)); ctx.fillStyle='rgba(10,10,14,0.85)'; ctx.fillRect(lx-tw/2,ly-c*0.14,tw,c*0.28); ctx.fillStyle=hd.active?'#8ef0b8':'#ffd27a'; ctx.fillText(label,lx,ly); } });
   }
   function drawHighlights(o){
     const ctx=o.ctx, c=o.cell;
@@ -2942,6 +2978,7 @@ const UI = (function(){
     let note=weaponsOn===0?'Classic game plus movement: shells only.':weaponsOn+' extra weapon'+(weaponsOn===1?'':'s')+' enabled.';
     if(o.navyTraits){ const l=S.lobby; note+=' Navy abilities on.'; if(l.hostNavy) note+=' '+traitLine(l.hostNavy); if(l.guestNavy) note+=' '+traitLine(l.guestNavy); }
     $('#options-note').textContent=note;
+    const sm=$('#options-summary'); if(sm) sm.textContent=(weaponsOn===0?'shells only':weaponsOn===5?'full arsenal':weaponsOn+' extra weapons')+(o.navyTraits?' + navy abilities':'')+(edit?' · tap to change':' · set by the host');
   }
   function afterOptionsChange(){ renderOptions(); renderLobby(); if(S.mode==='net') sendLobby(); save(); }
   function renderLobby(){
@@ -2950,8 +2987,9 @@ const UI = (function(){
     const hostBox=$('#lobby-host'), guestBox=$('#lobby-guest');
     hostBox.querySelector('.pname').textContent=(l.hostName||'Host')+(pid==='host'?' (you)':''); hostBox.querySelector('.pnavy').textContent=l.hostNavy?navy(l.hostNavy).name+(traitsOn&&NAVY_TRAITS[l.hostNavy]?' · '+NAVY_TRAITS[l.hostNavy].name:''):'choosing navy…'; hostBox.querySelector('.flagslot').innerHTML=l.hostNavy?Render.flagSVG(l.hostNavy,48,30):'<span class="livery" style="width:48px;height:30px;background:#223"></span>';
     guestBox.querySelector('.pname').textContent=(l.guestName||(S.mode==='ai'?'Admiral AI':'Guest'))+(pid==='guest'?' (you)':''); guestBox.querySelector('.pnavy').textContent=l.guestNavy?navy(l.guestNavy).name+(traitsOn&&NAVY_TRAITS[l.guestNavy]?' · '+NAVY_TRAITS[l.guestNavy].name:''):(S.mode==='net'&&!l.guestOnline?'not connected':'choosing navy…'); guestBox.querySelector('.flagslot').innerHTML=l.guestNavy?Render.flagSVG(l.guestNavy,48,30):'<span class="livery" style="width:48px;height:30px;background:#223"></span>';
-    const grid=$('#navy-grid'); grid.innerHTML='';
-    NAVIES.forEach(n=>{ const b=document.createElement('button'); b.className='navybtn'; const owner=takenBy(n.id); const mine=(pid==='host'?l.hostNavy:l.guestNavy)===n.id; if(mine) b.classList.add('selected'); else if(owner) b.classList.add('locked'); b.innerHTML=Render.flagSVG(n.id,64,40)+'<span>'+n.name+'</span>'+(traitsOn&&NAVY_TRAITS[n.id]?'<small>'+NAVY_TRAITS[n.id].name+'</small>':''); b.title=n.prefix+' — '+Object.values(n.ships).join(', ')+(traitsOn&&NAVY_TRAITS[n.id]?'\n'+NAVY_TRAITS[n.id].text+' Cost: '+NAVY_TRAITS[n.id].cost:''); b.addEventListener('click',()=>pickNavy(n.id)); grid.appendChild(b); });
+    const grid=$('#navy-grid'); grid.innerHTML=''; const narrow=window.matchMedia&&window.matchMedia('(max-width: 720px)').matches; const NAVY_SHORT={us:'USA',uk:'UK'};
+    { const mineId=pid==='host'?l.hostNavy:l.guestNavy, tl=$('#navy-trait'); tl.textContent=!mineId?'Tap a flag to choose.':navy(mineId).name+(traitsOn&&NAVY_TRAITS[mineId]?' — '+NAVY_TRAITS[mineId].name+': '+NAVY_TRAITS[mineId].text+' Cost: '+NAVY_TRAITS[mineId].cost:' — '+navy(mineId).prefix); }
+    NAVIES.forEach(n=>{ const b=document.createElement('button'); b.className='navybtn'; const owner=takenBy(n.id); const mine=(pid==='host'?l.hostNavy:l.guestNavy)===n.id; if(mine) b.classList.add('selected'); else if(owner) b.classList.add('locked'); b.innerHTML=Render.flagSVG(n.id,64,40)+'<span>'+(narrow&&NAVY_SHORT[n.id]||n.name)+'</span>'+(traitsOn&&NAVY_TRAITS[n.id]?'<small>'+NAVY_TRAITS[n.id].name+'</small>':''); b.title=n.prefix+' — '+Object.values(n.ships).join(', ')+(traitsOn&&NAVY_TRAITS[n.id]?'\n'+NAVY_TRAITS[n.id].text+' Cost: '+NAVY_TRAITS[n.id].cost:''); b.addEventListener('click',()=>pickNavy(n.id)); grid.appendChild(b); });
     renderOptions();
     let status=''; const startBtn=$('#btn-lobby-start');
     if(S.mode==='net'){ if(S.role==='host'){ status=l.guestOnline?(l.guestNavy&&l.hostNavy?'Both navies chosen. Confirm to start placing fleets.':'Opponent connected. Choose navies.'):(l.guestName?'Opponent '+l.guestName+' is away — the game waits for them.':'Share the game code or link. Waiting for an opponent to join…'); startBtn.classList.remove('hidden'); startBtn.disabled=!(l.guestOnline&&l.hostNavy&&l.guestNavy); } else { status=l.hostNavy?'Host has chosen '+navy(l.hostNavy).name+'. Pick your navy; the host confirms.':'Connected. Waiting for the host to choose…'; startBtn.classList.add('hidden'); } }
@@ -3140,6 +3178,14 @@ const UI = (function(){
     else if(S.weapon==='airstrike'){ if(S.target) en.targets=Rules.lineCells(S.target,S.airDir); }
     else if(S.weapon==='torpedo'){ en.lane=S.target?Rules.torpedoPath(laneFor(S.target)):null; }
     else en.target=S.target;
+    en.handles=aimHandles();
+  }
+  // Direction is chosen on the map itself, so the tray never grows over it: a torpedo shows an arrow at each mouth of the row and the column, an air strike shows where the line would swing to.
+  function aimHandles(){
+    if(!S.target||!myTurnNow()) return [];
+    if(S.weapon==='torpedo'){ const t=S.target, cur=S.torpDir%4; return LANE_MODES.map((m,k)=>({ type:'lane', dir:k, on:k===cur, dim:k!==cur, ang:m.axis==='row'?(m.dir===1?0:Math.PI):(m.dir===1?Math.PI/2:-Math.PI/2), cell:m.axis==='row'?{x:m.dir===1?0:SIZE-1,y:t.y}:{x:t.x,y:m.dir===1?0:SIZE-1} })); }
+    if(S.weapon==='airstrike'){ const t=S.target, other=Rules.lineCells(t,!S.airDir); const far=other.reduce((a,c)=>(Math.abs(c.x-t.x)+Math.abs(c.y-t.y))>(Math.abs(a.x-t.x)+Math.abs(a.y-t.y))?c:a, other[0]); return [{type:'rotcw', turn:true, label:'TURN', ang:0, cell:far}]; }
+    return [];
   }
   function clearTargets(){ S.target=null; S.targets=[]; syncTargets(); }
   function selectWeapon(id){ Sfx.unlock(); if(!WEAPONS[id]) return; S.weapon=id; clearTargets(); checkWeapon(); vib(8); Sfx.click(); if(myTurnNow()&&S.tab!=='enemy') setTab('enemy'); else renderActions(); }
@@ -3206,8 +3252,8 @@ const UI = (function(){
     if(w==='mg'){ const nb=Rules.weaponSpec(g,me(),'mg').bullets, n=S.targets.length; return {ready:n===nb, big:n?S.targets.map(cellName).join(' '):'Machine gun', sub:'Bullets '+n+'/'+nb+' from '+from+(n===nb?' · press FIRE MG':' · tap squares; tap one again to remove it')}; }
     if(w==='radar'){ const okShip=fs&&fs.bow&&!fs.sunk&&Rules.hitCount(fs)===0; if(!okShip) return {ready:false, big:'Radar', sub:'Pick an undamaged ship in the weapon list'}; const sz=Rules.radarAreaFor(g,me(),fs.cls,P0).size;
       return S.target?{ready:true, big:'Sweep '+areaName(Rules.radarAreaFor(g,me(),fs.cls,S.target)), sub:from+' '+sz+'×'+sz+' · tap again or press SWEEP · reveals that ship'}:{ready:false, big:'Radar '+sz+'×'+sz, sub:'From '+from+' · tap the top-left square of the area'}; }
-    if(w==='airstrike'){ if(!S.target) return {ready:false, big:'Air strike', sub:'Tap the first square of the bomb line'}; const line=Rules.lineCells(S.target,S.airDir); return {ready:true, big:cellName(line[0])+'–'+cellName(line[2]), sub:'Three bombs · pick ↔ or ↕ · tap again or press STRIKE'}; }
-    if(w==='torpedo'){ const ss=subStatus(); if(ss) return {ready:false, big:'Torpedo', sub:'Unavailable: '+ss}; return S.target?{ready:true, big:Rules.laneName(laneFor(S.target)), sub:'Pick the direction · tap again or press TORPEDO'}:{ready:false, big:'Torpedo', sub:'Tap any square in the row or column'}; }
+    if(w==='airstrike'){ if(!S.target) return {ready:false, big:'Air strike', sub:'Tap the first square of the bomb line'}; const line=Rules.lineCells(S.target,S.airDir); return {ready:true, big:cellName(line[0])+'–'+cellName(line[2]), sub:'Tap TURN on the map to swing the line · tap again or STRIKE'}; }
+    if(w==='torpedo'){ const ss=subStatus(); if(ss) return {ready:false, big:'Torpedo', sub:'Unavailable: '+ss}; return S.target?{ready:true, big:Rules.laneName(laneFor(S.target)), sub:'Tap an arrow on the map to change direction · tap again or TORPEDO'}:{ready:false, big:'Torpedo', sub:'Tap any square in the row or column'}; }
     return {ready:false, big:'', sub:''};
   }
   function trayButton(label, cls, onClick, id){ const b=document.createElement('button'); b.className=cls||''; b.textContent=label; if(id) b.id=id; b.addEventListener('click',()=>{ Sfx.unlock(); onClick(); }); return b; }
@@ -3243,8 +3289,6 @@ const UI = (function(){
     } else {
       const a=aimInfo(); set(a.big,a.sub); const av=weaponAvailability(S.weapon);
       btns.appendChild(trayButton(WEAPONS[S.weapon].short+' ▾','chip',openWeaponSheet,'tray-weapon'));
-      if(S.weapon==='airstrike'&&S.target){ chips.classList.remove('hidden'); chips.innerHTML='<span class="lbl">Bomb line</span>'; [[true,'↔ across'],[false,'↕ down']].forEach(([v,l])=>{ const c=trayButton(l,'chip line-chip'+(S.airDir===v?' selected':''),()=>{ S.airDir=v; syncTargets(); renderActions(); }); c.dataset.h=v?'1':'0'; chips.appendChild(c); }); }
-      if(S.weapon==='torpedo'&&S.target){ chips.classList.remove('hidden'); chips.innerHTML='<span class="lbl">Runs</span>'; LANE_MODES.forEach((m,k)=>{ const c=trayButton(m.label.split(' ')[0],'chip lane-chip'+(S.torpDir%4===k?' selected':''),()=>{ S.torpDir=k; syncTargets(); renderActions(); }); c.dataset.dir=String(k); chips.appendChild(c); }); }
       if(S.target||S.targets.length) btns.appendChild(trayButton('✕','chip',()=>{ clearTargets(); renderActions(); },'tray-clear'));
       const fb=trayButton(FIRE_LABEL[S.weapon],'fire',()=>doFire(),'tray-fire'); fb.disabled=!(a.ready&&av.ok); btns.appendChild(fb);
     }
@@ -3331,7 +3375,9 @@ const UI = (function(){
   // Enemy waters: tap a square to aim, tap the same square again to fire. The machine gun collects its squares and fires from the tray.
   function selectTarget(cell){
     const g=S.game; if(S.tab!=='enemy') setTab('enemy'); if(!myTurnNow()||S.busy||S.pendingFire) return;
-    const now=Date.now(), same=S.target&&S.target.x===cell.x&&S.target.y===cell.y;
+    const now=Date.now(); let same=S.target&&S.target.x===cell.x&&S.target.y===cell.y;
+    const hd=(S.oceans.enemy.handles||[]).find(h=>h.cell.x===cell.x&&h.cell.y===cell.y);
+    if(hd&&!(hd.on&&same)){ if(hd.on){ same=false; } else { if(hd.type==='lane') S.torpDir=hd.dir; else S.airDir=!S.airDir; S.targetAt=now; vib(8); Sfx.click(); syncTargets(); renderActions(); return; } }
     if(S.weapon==='mg'){ const nb=Rules.weaponSpec(g,me(),'mg').bullets; const k=cellKey(cell); const i=S.targets.findIndex(c=>cellKey(c)===k); if(i>=0) S.targets.splice(i,1); else { if(S.targets.length>=nb){ Sfx.buzz(); toast(nb+' bullets only — tap a numbered square to remove it.','err',1800); return; } S.targets.push(cell); } }
     else if(same){ if(now-S.targetAt<350) return; if(aimInfo().ready&&weaponAvailability(S.weapon).ok) doFire(); return; }
     else { S.target=cell; S.targetAt=now; }

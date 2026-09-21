@@ -14,7 +14,7 @@ class Browser{
     await new Promise((res,rej)=>{ this.ws.onopen=res; this.ws.onerror=rej; });
     this.ws.onmessage=ev=>{ const m=JSON.parse(ev.data); if(m.id&&this.pending.has(m.id)){ const p=this.pending.get(m.id); this.pending.delete(m.id); m.error?p.rej(new Error(JSON.stringify(m.error))):p.res(m.result); } else if(m.method){ this.onEvent(m); } };
     await this.send('Runtime.enable'); await this.send('Log.enable'); await this.send('Page.enable');
-    if(this.mobile){ await this.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:2,mobile:true}); await this.send('Emulation.setTouchEmulationEnabled',{enabled:true}); }
+    if(this.mobile){ this.phoneH=this.phoneH||Number((this.win||'').split(',')[1])||844; await this.send('Emulation.setDeviceMetricsOverride',{width:390,height:this.phoneH||844,deviceScaleFactor:2,mobile:true}); await this.send('Emulation.setTouchEmulationEnabled',{enabled:true}); }
   }
   json(p){ return new Promise((res,rej)=>{ http.get({host:'127.0.0.1',port:this.port,path:p},r=>{ let d=''; r.on('data',c=>d+=c); r.on('end',()=>{ try{ res(JSON.parse(d)); }catch(e){ rej(e); } }); }).on('error',rej); }); }
   send(method,params){ const id=this.id++; return new Promise((res,rej)=>{ this.pending.set(id,{res,rej}); this.ws.send(JSON.stringify({id,method,params:params||{}})); }); }
@@ -53,6 +53,7 @@ async function selectShip(b, i){ await showTab(b,'own'); await b.click('#tray-fl
 async function legalMoves(b){ return b.eval(`(Underway.UI.S.oceans.own.handles||[]).map(h=>h.type)`); }
 // Selected ship: tap the move handle on the map, then confirm ('tray' = Confirm button, 'tap' = tap the handle again). False when that move is not offered.
 async function moveShip(b, type, how){ const cell=await b.eval(`(()=>{ const h=(Underway.UI.S.oceans.own.handles||[]).find(x=>x.type==='${type}'); return h?h.cell:null; })()`); if(!cell) return false; await tapOwn(b,cell); if(how==='tap') await tapOwn(b,cell); else await b.click('#tray-confirm'); return true; }
-async function setLane(b, k){ return b.click('.lane-chip[data-dir="'+k+'"]'); }
-async function setLine(b, horizontal){ return b.click('.line-chip[data-h="'+(horizontal?1:0)+'"]'); }
+// Direction handles live on the enemy map: an arrow at each mouth of the torpedo's row and column, a TURN handle for the air-strike line.
+async function setLane(b, k){ const h=await b.eval(`(()=>{ const h=(Underway.UI.S.oceans.enemy.handles||[]).find(x=>x.type==='lane'&&x.dir===${k}); return h?{cell:h.cell,on:!!h.on}:null; })()`); if(!h) return false; if(!h.on) await tapEnemy(b,h.cell); return true; }
+async function setLine(b, horizontal){ const cur=await b.eval(`Underway.UI.S.airDir`); if(!!cur===!!horizontal) return true; const h=await b.eval(`(()=>{ const h=(Underway.UI.S.oceans.enemy.handles||[]).find(x=>x.turn); return h?h.cell:null; })()`); if(!h) return false; await tapEnemy(b,h); return true; }
 Object.assign(module.exports,{tapEnemy,tapOwn,showTab,pickWeapon,fire,selectShip,legalMoves,moveShip,setLane,setLine});
